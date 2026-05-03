@@ -125,9 +125,17 @@ class Comment(db.Model):
 
     learner: Mapped["Learner"] = relationship(back_populates="comments")
     step: Mapped["Step"] = relationship(back_populates="comments")
+    
+    # ✅ ИСПРАВЛЕНО: строковый путь разрешается лениво после инициализации класса
     parent: Mapped[Optional["Comment"]] = relationship(
-        remote_side=["comment_id"], back_populates="replies"
+        "Comment",
+        remote_side='Comment.comment_id',  # ← Строка, а не __table__.c
+        back_populates="replies",
+        foreign_keys=[parent_comment_id]
     )
     replies: Mapped[List["Comment"]] = relationship(
-        back_populates="parent", cascade="all, delete-orphan"
+        "Comment",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        foreign_keys=[parent_comment_id]
     )
