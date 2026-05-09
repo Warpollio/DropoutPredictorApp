@@ -4,7 +4,8 @@ from sqlalchemy import insert
 from flask.cli import with_appcontext
 import click
 from config import app, db
-from models import Course, Module, Step, Learner, Submission, Comment
+from models import Course, Module, Step, Learner, Submission, Comment, Lesson
+from sqlalchemy import insert, select, func
 
 import os
 
@@ -58,46 +59,91 @@ def import_data_cli(data_dir):
 def import_structure(csv_filepath):
     if not os.path.exists(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
-        return
+        return {"courses": 0, "modules": 0, "lessons": 0, "steps": 0}
 
-    print(f"📦 [1/4] Импорт структуры: {csv_filepath}")
-    courses, modules, steps = [], [], []
-    added_c = added_m = added_s = 0
+    print(f"📦 [1/4] Импорт структуры: {os.path.basename(csv_filepath)}")
+
+    # 1. Считаем записи ДО импорта (для точной статистики)
+    c_before = db.session.execute(select(func.count()).select_from(Course)).scalar()
+    m_before = db.session.execute(select(func.count()).select_from(Module)).scalar()
+    l_before = db.session.execute(select(func.count()).select_from(Lesson)).scalar()
+    s_before = db.session.execute(select(func.count()).select_from(Step)).scalar()
+
+    courses, modules, lessons, steps = [], [], [], []
 
     with open(csv_filepath, "r", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            cid, mid, sid = row.get("course_id"), row.get("module_id"), row.get("step_id")
-            
+            cid = row.get("course_id")
+            mid = row.get("module_id")
+            lid = row.get("lesson_id")
+            sid = row.get("step_id")
+
             if cid:
-                courses.append({"course_id": int(cid), "name": f"Course {cid}", "difficulty": 0.5, "discrimination": 0.5})
-                if len(courses) >= BATCH_SIZE:
-                    added_c += _bulk_insert_or_ignore(Course, courses)
-                    db.session.commit()
-                    courses.clear()
+                courses.append({
+                    "course_id": int(cid),
+                    "name": f"Course {cid}",
+                    "difficulty": 0.5,
+                    "discrimination": 0.5
+                })
 
             if mid and cid:
-                modules.append({"module_id": int(mid), "course_id": int(cid), "difficulty": 0.5, "discrimination": 0.5})
-                if len(modules) >= BATCH_SIZE:
-                    added_m += _bulk_insert_or_ignore(Module, modules)
-                    db.session.commit()
-                    modules.clear()
+                modules.append({
+                    "module_id": int(mid),
+                    "course_id": int(cid),
+                    "position": int(row.get("module_position") or 0),
+                    "difficulty": 0.5,
+                    "discrimination": 0.5
+                })
 
-            if sid and mid:
-                steps.append({"step_id": int(sid), "module_id": int(mid), "difficulty": 0.5, "discrimination": 0.5})
-                if len(steps) >= BATCH_SIZE:
-                    added_s += _bulk_insert_or_ignore(Step, steps)
-                    db.session.commit()
-                    steps.clear()
+            if lid and mid:
+                lessons.append({
+                    "lesson_id": int(lid),
+                    "module_id": int(mid),
+                    "position": int(row.get("lesson_position") or 0),
+                    "begin_date_utc": _parse_datetime(row.get("begin_date_utc")),
+                    "end_date_utc": _parse_datetime(row.get("end_date_utc")),
+                    "soft_deadline_utc": _parse_datetime(row.get("soft_deadline_utc")),
+                    "hard_deadline_utc": _parse_datetime(row.get("hard_deadline_utc")),
+                    "grading_policy": row.get("grading_policy")
+                })
 
-    # Остатки
-    if courses: added_c += _bulk_insert_or_ignore(Course, courses)
-    if modules: added_m += _bulk_insert_or_ignore(Module, modules)
-    if steps:    added_s += _bulk_insert_or_ignore(Step, steps)
+            # ⚠️ ВАЖНО: Step теперь ссылается на lesson_id, а не module_id
+            if sid and lid:
+                steps.append({
+                    "step_id": int(sid),
+                    "lesson_id": int(lid),
+                    "position": int(row.get("step_position") or 0),
+                    "step_type": row.get("step_type"),
+                    "step_cost": float(row.get("step_cost") or 0),
+                    "difficulty": 0.5,
+                    "discrimination": 0.5
+                })
+
+            # Пакетный коммит при достижении лимита
+            if len(courses) >= BATCH_SIZE:
+                _bulk_insert_or_ignore(Course, courses); db.session.commit(); courses.clear()
+            if len(modules) >= BATCH_SIZE:
+                _bulk_insert_or_ignore(Module, modules); db.session.commit(); modules.clear()
+            if len(lessons) >= BATCH_SIZE:
+                _bulk_insert_or_ignore(Lesson, lessons); db.session.commit(); lessons.clear()
+            if len(steps) >= BATCH_SIZE:
+                _bulk_insert_or_ignore(Step, steps); db.session.commit(); steps.clear()
+
+    # 2. Вставляем остатки
+    if courses: _bulk_insert_or_ignore(Course, courses)
+    if modules: _bulk_insert_or_ignore(Module, modules)
+    if lessons: _bulk_insert_or_ignore(Lesson, lessons)
+    if steps: _bulk_insert_or_ignore(Step, steps)
     db.session.commit()
 
-    print(f"   ✅ Добавлено: Курсов={added_c}, Модулей={added_m}, Шагов={added_s}")
-    return {"courses": added_c, "modules": added_m, "steps": added_s}
+    # 3. Считаем записи ПОСЛЕ импорта → получаем точное число добавленных строк
+    added_c = db.session.execute(select(func.count()).select_from(Course)).scalar() - c_before
+    added_m = db.session.execute(select(func.count()).select_from(Module)).scalar() - m_before
+    added_l = db.session.execute(select(func.count()).select_from(Lesson)).scalar() - l_before
+    added_s = db.session.execute(select(func.count()).select_from(Step)).scalar() - s_before
 
+    print(f"   ✅ Добавлено: Курсов={added_c}, Модулей={added_m}, Уроков={added_l}, Шагов={added_s}")
+    return {"courses": added_c, "modules": added_m, "lessons": added_l, "steps": added_s}
 # ==============================================================================
 # 2. Импорт пользователей
 # ==============================================================================

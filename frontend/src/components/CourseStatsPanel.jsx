@@ -3,7 +3,7 @@ import {
   Paper, Typography, FormControl, InputLabel, Select, MenuItem, 
   Box, Grid, Card, CardContent, Divider, Chip, CircularProgress, Alert 
 } from '@mui/material';
-import { School, Category, Newspaper, People, Assignment } from '@mui/icons-material';
+import { School, Category, MenuBook, People, Assignment } from '@mui/icons-material'; // ← Добавлена иконка
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -126,7 +126,8 @@ export default function CourseStatsPanel({ sx = {} }) {
             </Box>
           ) : (
             <Grid container spacing={2}>
-              <Grid item xs={6} sm={3}>
+              {/* Модули */}
+              <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: 'action.hover' }}>
                   <CardContent sx={{ p: 2, textAlign: 'center' }}>
                     <Category color="primary" sx={{ mb: 1 }} />
@@ -140,10 +141,26 @@ export default function CourseStatsPanel({ sx = {} }) {
                 </Card>
               </Grid>
 
-              <Grid item xs={6} sm={3}>
+              {/* Уроки (НОВОЕ) */}
+              <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: 'action.hover' }}>
                   <CardContent sx={{ p: 2, textAlign: 'center' }}>
-                    <Newspaper color="primary" sx={{ mb: 1 }} />
+                    <MenuBook color="primary" sx={{ mb: 1 }} />
+                    <Typography variant="h6" color="text.primary">
+                      {details.stats.lessons}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Уроков
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Шаги */}
+              <Grid item xs={6} sm={4} md={2.4}>
+                <Card sx={{ bgcolor: 'action.hover' }}>
+                  <CardContent sx={{ p: 2, textAlign: 'center' }}>
+                    <Assignment color="primary" sx={{ mb: 1 }} />
                     <Typography variant="h6" color="text.primary">
                       {details.stats.steps}
                     </Typography>
@@ -154,7 +171,8 @@ export default function CourseStatsPanel({ sx = {} }) {
                 </Card>
               </Grid>
 
-              <Grid item xs={6} sm={3}>
+              {/* Активные студенты */}
+              <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: 'action.hover' }}>
                   <CardContent sx={{ p: 2, textAlign: 'center' }}>
                     <People color="success" sx={{ mb: 1 }} />
@@ -168,7 +186,8 @@ export default function CourseStatsPanel({ sx = {} }) {
                 </Card>
               </Grid>
 
-              <Grid item xs={6} sm={3}>
+              {/* Попытки */}
+              <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: 'action.hover' }}>
                   <CardContent sx={{ p: 2, textAlign: 'center' }}>
                     <Assignment color="secondary" sx={{ mb: 1 }} />

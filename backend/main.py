@@ -6,7 +6,7 @@ import os
 import tempfile
 
 from sqlalchemy import func, select
-from models import Course, Module, Step, Learner, Submission
+from models import Course, Module, Step, Learner, Submission, Lesson
 
 
 @app.route("/hello", methods=["GET"])
@@ -55,23 +55,34 @@ def api_import():
 
 
 
+
 @app.route('/api/courses/stats', methods=['GET'])
 def get_courses_stats():
     """Возвращает список курсов с базовой статистикой"""
     try:
-        # Подзапросы для подсчёта связанных записей
+        # 1. Модули в курсе (без изменений)
         modules_count = select(func.count(Module.module_id)).where(
             Module.course_id == Course.course_id
         ).scalar_subquery()
         
-        steps_count = select(func.count(Step.step_id)).where(
-            Step.module_id == Module.module_id,
+        # 2. Уроки (НОВОЕ)
+        lessons_count = select(func.count(Lesson.lesson_id)).where(
+            Lesson.module_id == Module.module_id,
             Module.course_id == Course.course_id
         ).scalar_subquery()
         
+        # 3. Шаги (ОБНОВЛЕНО: цепочка теперь идёт через Lesson)
+        steps_count = select(func.count(Step.step_id)).where(
+            Step.lesson_id == Lesson.lesson_id,
+            Lesson.module_id == Module.module_id,
+            Module.course_id == Course.course_id
+        ).scalar_subquery()
+        
+        # 4. Попытки (ОБНОВЛЕНО: цепочка теперь идёт через Lesson)
         submissions_count = select(func.count(Submission.submission_id)).where(
             Submission.step_id == Step.step_id,
-            Step.module_id == Module.module_id,
+            Step.lesson_id == Lesson.lesson_id,
+            Lesson.module_id == Module.module_id,
             Module.course_id == Course.course_id
         ).scalar_subquery()
         
@@ -80,12 +91,12 @@ def get_courses_stats():
                 Course.course_id,
                 Course.name,
                 modules_count.label('modules_count'),
+                lessons_count.label('lessons_count'),
                 steps_count.label('steps_count'),
                 submissions_count.label('submissions_count')
             ).order_by(Course.name)
         ).all()
         
-        # Отдельный запрос для общего количества уникальных пользователей
         learners_count = db.session.execute(
             select(func.count(Learner.user_id))
         ).scalar()
@@ -98,6 +109,7 @@ def get_courses_stats():
                     'id': c.course_id,
                     'name': c.name,
                     'modules': c.modules_count or 0,
+                    'lessons': c.lessons_count or 0,   # ← Добавлено в ответ
                     'steps': c.steps_count or 0,
                     'submissions': c.submissions_count or 0
                 }
@@ -118,30 +130,47 @@ def get_course_details(course_id):
         if not course:
             return jsonify({'error': 'Курс не найден'}), 404
         
-        # Подсчёт модулей и шагов
+        # 1. Модули в курсе
         modules_count = db.session.execute(
             select(func.count(Module.module_id)).where(Module.course_id == course_id)
         ).scalar()
         
-        steps_count = db.session.execute(
-            select(func.count(Step.step_id))
-            .join(Module, Step.module_id == Module.module_id)
+        # 2. Уроки в модулях курса (НОВОЕ)
+        lessons_count = db.session.execute(
+            select(func.count(Lesson.lesson_id))
+            .join(Module, Lesson.module_id == Module.module_id)
             .where(Module.course_id == course_id)
         ).scalar()
         
-        # Уникальные пользователи, сделавшие хотя бы одну попытку в этом курсе
+        # 3. Шаги в уроках курса (ОБНОВЛЕНО: цепочка через Lesson)
+        steps_count = db.session.execute(
+            select(func.count(Step.step_id))
+            .join(Lesson, Step.lesson_id == Lesson.lesson_id)
+            .join(Module, Lesson.module_id == Module.module_id)
+            .where(Module.course_id == course_id)
+        ).scalar()
+        
+        # 4. Уникальные пользователи с попытками в этом курсе (ОБНОВЛЕНО)
         active_learners = db.session.execute(
             select(func.count(Submission.user_id.distinct()))
             .join(Step, Submission.step_id == Step.step_id)
-            .join(Module, Step.module_id == Module.module_id)
+            .join(Lesson, Step.lesson_id == Lesson.lesson_id)
+            .join(Module, Lesson.module_id == Module.module_id)
             .where(Module.course_id == course_id)
         ).scalar()
         
+        # 5. Общее число попыток в этом курсе (ОБНОВЛЕНО)
         submissions_count = db.session.execute(
             select(func.count(Submission.submission_id))
             .join(Step, Submission.step_id == Step.step_id)
-            .join(Module, Step.module_id == Module.module_id)
+            .join(Lesson, Step.lesson_id == Lesson.lesson_id)
+            .join(Module, Lesson.module_id == Module.module_id)
             .where(Module.course_id == course_id)
+        ).scalar()
+        
+        # Общее число пользователей в БД (SA 2.0 стиль)
+        total_learners = db.session.execute(
+            select(func.count(Learner.user_id))
         ).scalar()
         
         return jsonify({
@@ -153,9 +182,10 @@ def get_course_details(course_id):
             },
             'stats': {
                 'modules': modules_count or 0,
+                'lessons': lessons_count or 0,
                 'steps': steps_count or 0,
                 'active_learners': active_learners or 0,
-                'total_learners': db.session.query(Learner).count(),  # все пользователи в БД
+                'total_learners': total_learners or 0,
                 'submissions': submissions_count or 0
             }
         }), 200
@@ -163,8 +193,6 @@ def get_course_details(course_id):
     except Exception as e:
         app.logger.error(f"Ошибка получения деталей курса {course_id}: {e}")
         return jsonify({'error': 'Не удалось загрузить детали курса'}), 500
-
-
 
 if __name__ == "__main__":
     with app.app_context():

@@ -2,15 +2,13 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Index, Text, func
+    Boolean, DateTime, Float, ForeignKey, Index, Integer, Text, func
 )
 from sqlalchemy.orm import (
-    DeclarativeBase, Mapped, mapped_column, relationship
+    Mapped, mapped_column, relationship
 )
 
 from config import db
-
-
 
 class Course(db.Model):
     __tablename__ = 'course'
@@ -27,33 +25,52 @@ class Course(db.Model):
 
 class Module(db.Model):
     __tablename__ = 'module'
-    __table_args__ = (
-        Index('idx_module_course', 'course_id'),
-    )
+    __table_args__ = (Index('idx_module_course', 'course_id'),)
 
     module_id: Mapped[int] = mapped_column(primary_key=True)
     course_id: Mapped[int] = mapped_column(ForeignKey('course.course_id', ondelete='CASCADE'))
+    position: Mapped[int] = mapped_column(Integer, default=0)
     difficulty: Mapped[float] = mapped_column(Float, default=0.5)
     discrimination: Mapped[float] = mapped_column(Float, default=0.5)
 
     course: Mapped["Course"] = relationship(back_populates="modules")
-    steps: Mapped[List["Step"]] = relationship(
+    lessons: Mapped[List["Lesson"]] = relationship(
         back_populates="module", cascade="all, delete-orphan"
+    )
+
+
+class Lesson(db.Model):
+    __tablename__ = 'lesson'
+    __table_args__ = (Index('idx_lesson_module', 'module_id'),)
+
+    lesson_id: Mapped[int] = mapped_column(primary_key=True)
+    module_id: Mapped[int] = mapped_column(ForeignKey('module.module_id', ondelete='CASCADE'))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    begin_date_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    end_date_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    soft_deadline_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    hard_deadline_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    grading_policy: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    module: Mapped["Module"] = relationship(back_populates="lessons")
+    steps: Mapped[List["Step"]] = relationship(
+        back_populates="lesson", cascade="all, delete-orphan"
     )
 
 
 class Step(db.Model):
     __tablename__ = 'step'
-    __table_args__ = (
-        Index('idx_step_module', 'module_id'),
-    )
+    __table_args__ = (Index('idx_step_lesson', 'lesson_id'),)
 
     step_id: Mapped[int] = mapped_column(primary_key=True)
-    module_id: Mapped[int] = mapped_column(ForeignKey('module.module_id', ondelete='CASCADE'))
-    discrimination: Mapped[float] = mapped_column(Float, default=0.5)
+    lesson_id: Mapped[int] = mapped_column(ForeignKey('lesson.lesson_id', ondelete='CASCADE'))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    step_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    step_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=0.0)
     difficulty: Mapped[float] = mapped_column(Float, default=0.5)
+    discrimination: Mapped[float] = mapped_column(Float, default=0.5)
 
-    module: Mapped["Module"] = relationship(back_populates="steps")
+    lesson: Mapped["Lesson"] = relationship(back_populates="steps")
     submissions: Mapped[List["Submission"]] = relationship(
         back_populates="step", cascade="all, delete-orphan"
     )
@@ -126,7 +143,6 @@ class Comment(db.Model):
     learner: Mapped["Learner"] = relationship(back_populates="comments")
     step: Mapped["Step"] = relationship(back_populates="comments")
     
-
     parent: Mapped[Optional["Comment"]] = relationship(
         "Comment",
         remote_side='Comment.comment_id',
