@@ -24,7 +24,7 @@ function App() {
         <Routes>
           <Route path="/" element={<UploadPage />} /> 
           <Route path="/filters" element={<FilterPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/dashboard/:courseId?" element={<DashboardPage />} />
         </Routes>
       </Router>
     </ThemeProvider>

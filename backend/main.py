@@ -5,8 +5,8 @@ from csv_import import import_structure, import_learners, import_submissions, im
 import os
 import tempfile
 
-from sqlalchemy import func, select
-from models import Course, Module, Step, Learner, Submission, Lesson
+from sqlalchemy import func, select, and_
+from models import Course, Module, Step, Learner, Submission, Lesson, Comment
 
 
 @app.route("/hello", methods=["GET"])
@@ -193,6 +193,117 @@ def get_course_details(course_id):
     except Exception as e:
         app.logger.error(f"Ошибка получения деталей курса {course_id}: {e}")
         return jsonify({'error': 'Не удалось загрузить детали курса'}), 500
+
+@app.route('/api/courses/<int:course_id>/step-stats', methods=['GET'])
+def get_course_step_stats(course_id):
+    """
+    Возвращает статистику по шагам курса с фильтрами.
+    
+    Параметры запроса (query params):
+    - module_id: фильтр по модулю (опционально)
+    - lesson_id: фильтр по уроку (опционально)
+    - metrics: список метрик через запятую (submissions, successful, comments)
+    """
+    try:
+        # Проверяем существование курса
+        course = db.session.get(Course, course_id)
+        if not course:
+            return jsonify({'error': 'Курс не найден'}), 404
+        
+        # Получаем параметры фильтрации
+        module_id = request.args.get('module_id', type=int)
+        lesson_id = request.args.get('lesson_id', type=int)
+        metrics = request.args.get('metrics', 'submissions,successful,comments').split(',')
+        
+        # Базовый запрос: все шаги курса с позицией
+        query = select(
+            Step.step_id,
+            Step.position.label('step_position'),
+            Step.step_type
+        ).join(Lesson, Step.lesson_id == Lesson.lesson_id)\
+         .join(Module, Lesson.module_id == Module.module_id)\
+         .where(Module.course_id == course_id)
+        
+        # Применяем фильтры
+        if module_id:
+            query = query.where(Lesson.module_id == module_id)
+        if lesson_id:
+            query = query.where(Step.lesson_id == lesson_id)
+        
+        query = query.order_by(Step.position)
+        steps = db.session.execute(query).all()
+        
+        result = []
+        for step in steps:
+            step_data = {
+                'step_id': step.step_id,
+                'position': step.step_position,
+                'step_type': step.step_type
+            }
+            
+            # Подзапросы для метрик (выполняются только если запрошены)
+            if 'submissions' in metrics or 'successful' in metrics:
+                # Общее количество попыток на шаг
+                sub_query = select(func.count(Submission.submission_id)).where(
+                    Submission.step_id == step.step_id
+                )
+                step_data['submissions'] = db.session.execute(sub_query).scalar() or 0
+                
+                # Успешные попытки (статус = 'correct' ИЛИ балл >= 0.8)
+                if 'successful' in metrics:
+                    success_query = select(func.count(Submission.submission_id)).where(
+                        and_(
+                            Submission.step_id == step.step_id,
+                            (Submission.status == 'correct') | (Submission.score >= 0.8)
+                        )
+                    )
+                    step_data['successful'] = db.session.execute(success_query).scalar() or 0
+            
+            # Комментарии к шагу
+            if 'comments' in metrics:
+                comment_query = select(func.count(Comment.comment_id)).where(
+                    and_(
+                        Comment.step_id == step.step_id,
+                        Comment.deleted == False
+                    )
+                )
+                step_data['comments'] = db.session.execute(comment_query).scalar() or 0
+            
+            result.append(step_data)
+        
+        # Мета-информация для фильтров
+        filters_meta = {
+            'modules': [
+                {'id': m.module_id, 'name': f"Module {m.module_id}", 'position': m.position}
+                for m in db.session.execute(
+                    select(Module.module_id, Module.position)
+                    .where(Module.course_id == course_id)
+                    .order_by(Module.position)
+                ).all()
+            ],
+            'lessons': [
+                {'id': l.lesson_id, 'name': f"Lesson {l.lesson_id}", 'module_id': l.module_id, 'position': l.position}
+                for l in db.session.execute(
+                    select(Lesson.lesson_id, Lesson.module_id, Lesson.position)
+                    .join(Module, Lesson.module_id == Module.module_id)
+                    .where(Module.course_id == course_id)
+                    .order_by(Lesson.position)
+                ).all()
+            ]
+        }
+        
+        return jsonify({
+            'course_id': course_id,
+            'course_name': course.name,
+            'metrics': [m.strip() for m in metrics],
+            'filters': filters_meta,
+            'data': result
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f"Ошибка статистики шагов: {e}")
+        return jsonify({'error': 'Не удалось загрузить статистику'}), 500
+
 
 if __name__ == "__main__":
     with app.app_context():
