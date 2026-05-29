@@ -219,7 +219,9 @@ def get_course_step_stats(course_id):
         query = select(
             Step.step_id,
             Step.position.label('step_position'),
-            Step.step_type
+            Step.step_type,
+            Lesson.lesson_id.label('lesson_id'),
+            Lesson.module_id.label('module_id') 
         ).join(Lesson, Step.lesson_id == Lesson.lesson_id)\
          .join(Module, Lesson.module_id == Module.module_id)\
          .where(Module.course_id == course_id)
@@ -230,7 +232,10 @@ def get_course_step_stats(course_id):
         if lesson_id:
             query = query.where(Step.lesson_id == lesson_id)
         
-        query = query.order_by(Step.position)
+        #query = query.order_by(Step.position) #   ordering
+        #query = query.order_by(Step.step_id) #   ordering
+        query = query.order_by(Module.position, Lesson.position, Step.position)
+        
         steps = db.session.execute(query).all()
         
         result = []
@@ -238,7 +243,9 @@ def get_course_step_stats(course_id):
             step_data = {
                 'step_id': step.step_id,
                 'position': step.step_position,
-                'step_type': step.step_type
+                'step_type': step.step_type,
+                'lesson_id': step.lesson_id,
+                'module_id': step.module_id
             }
             
             # Подзапросы для метрик (выполняются только если запрошены)
