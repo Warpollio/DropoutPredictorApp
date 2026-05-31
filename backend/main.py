@@ -8,6 +8,9 @@ import tempfile
 from sqlalchemy import func, select, and_
 from models import Course, Module, Step, Learner, Submission, Lesson, Comment
 
+#from sqlalchemy import func, cast, Date
+from datetime import datetime, timedelta
+
 
 @app.route("/hello", methods=["GET"])
 def hello_world():
@@ -310,6 +313,87 @@ def get_course_step_stats(course_id):
     except Exception as e:
         app.logger.error(f"Ошибка статистики шагов: {e}")
         return jsonify({'error': 'Не удалось загрузить статистику'}), 500
+
+@app.route('/api/courses/<int:course_id>/enrollment', methods=['GET'])
+def get_course_enrollment(course_id):
+    """
+    Статистика регистрации студентов по датам (SQLite).
+    
+    Формат даты в БД: 'YYYY-MM-DD HH:MM:SS.ffffff'
+    
+    Query params:
+    - start_date: YYYY-MM-DD (опционально)
+    - end_date: YYYY-MM-DD (опционально)
+    - interval: 'day' | 'week' | 'month' (по умолчанию 'month')
+    """
+    try:
+        # Проверяем существование курса
+        course = db.session.get(Course, course_id)
+        if not course:
+            return jsonify({'error': 'Курс не найден'}), 404
+        
+        #Получаем параметры запроса
+        interval = request.args.get('interval', 'month')  # day | week | month
+        start_date = request.args.get('start_date')       # 'YYYY-MM-DD' или None
+        end_date = request.args.get('end_date')           # 'YYYY-MM-DD' или None
+        
+        # Формат для группировки (SQLite strftime)
+        if interval == 'week':
+            date_format = '%Y-%W'    # '2024-12' (год-неделя)
+        elif interval == 'month':
+            date_format = '%Y-%m'    # '2024-01'
+        else:  # day
+            date_format = '%Y-%m-%d' # '2024-01-15'
+        
+        query = select(
+            func.strftime(date_format, Learner.date_joined_utc).label('date'),
+            func.count(Learner.user_id).label('count')
+        ).where(
+            Learner.date_joined_utc.isnot(None)  # исключаем NULL
+        )
+        
+        # Фильтры по датам
+        if start_date:
+            # strftime('%Y-%m-%d', ...) извлекает дату из '2024-01-15 10:30:00'
+            query = query.where(
+                func.strftime('%Y-%m-%d', Learner.date_joined_utc) >= start_date
+            )
+        if end_date:
+            query = query.where(
+                func.strftime('%Y-%m-%d', Learner.date_joined_utc) <= end_date
+            )
+        
+        query = query.group_by('date').order_by('date')
+        
+        rows = db.session.execute(query).all()
+        
+        #Формируем ответ
+        # data = [{'date': row.date, 'count': row.count} for row in rows]
+        data = []
+        for row in rows:
+            date_str = row.date  # '2024-12' для недель
+            # Если интервал недель и строка похожа на 'YYYY-NN'
+            if interval == 'week' and len(date_str) == 7 and date_str[4] == '-':
+                year, week = date_str.split('-')
+                date_str = f"{year}-W{week}"  # '2024-W12'
+            
+            data.append({'date': date_str, 'count': row.count})
+        
+        return jsonify({
+            'course_id': course_id,
+            'period': {
+                'interval': interval,
+                'start': start_date,
+                'end': end_date
+            },
+            'total_new_learners': sum(d['count'] for d in data),
+            'data': data
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f"Ошибка enrollment: {e}")
+        return jsonify({'error': 'Не удалось загрузить статистику'}), 500
+
 
 
 if __name__ == "__main__":

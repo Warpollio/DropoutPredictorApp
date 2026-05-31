@@ -9,6 +9,7 @@ import axios from 'axios';
 import FilterPanel from './FilterPanel';
 import MetricToggle from './MetricToggle';
 import StepChart from './StepChart';
+import EnrollmentChart from './EnrollmentChart';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -32,6 +33,16 @@ export default function CourseDashboard({ courseId = null, sx = {} }) {
   const [error, setError] = useState(null);
   
   const requestRef = useRef(null);
+
+  // График поступлений
+
+  const [enrollmentDates, setEnrollmentDates] = useState({
+  start: '',  // пустая строка = с начала времён
+  end: ''     // пустая строка = до сегодня
+});
+const [enrollmentPeriod, setEnrollmentPeriod] = useState('month'); // 'day' | 'week' | 'month'
+const [enrollmentData, setEnrollmentData] = useState([]);
+const [enrollmentLoading, setEnrollmentLoading] = useState(false);
 
   // 🔹 Загружаем список курсов (один раз)
   useEffect(() => {
@@ -88,6 +99,35 @@ export default function CourseDashboard({ courseId = null, sx = {} }) {
     return () => { requestRef.current = null; };
   }, [courseId, selectedMetrics.join(','), activeFilters.module_id, activeFilters.lesson_id]);
 
+  // 🔹 Загружаем статистику регистрации
+  useEffect(() => {
+    if (!courseId) return;
+    
+    const fetchEnrollment = async () => {
+      try {
+        setEnrollmentLoading(true);
+        
+        // Формируем параметры запроса
+        const params = { interval: enrollmentPeriod };
+        if (enrollmentDates.start) params.start_date = enrollmentDates.start;
+        if (enrollmentDates.end) params.end_date = enrollmentDates.end;
+        
+        const res = await axios.get(
+          `${API_URL}/api/courses/${courseId}/enrollment`,
+          { timeout: 10000, params }
+        );
+        setEnrollmentData(res.data.data);
+      } catch (err) {
+        console.error('❌ Ошибка загрузки enrollment:', err);
+        setError('Не удалось загрузить статистику регистрации');
+      } finally {
+        setEnrollmentLoading(false);
+      }
+    };
+    
+    fetchEnrollment();
+  }, [courseId, enrollmentPeriod, enrollmentDates.start, enrollmentDates.end]);
+
   // 🔄 При выборе курса — просто меняем URL
   const handleCourseChange = (event) => {
     const newId = event.target.value;
@@ -143,7 +183,7 @@ export default function CourseDashboard({ courseId = null, sx = {} }) {
     );
   }
 
-  // 🎨 ЕСТЬ courseId → показываем дэшборд
+  //ЕСТЬ courseId → показываем дэшборд
   return (
     <Container maxWidth="xl" sx={{ py: 4, ...sx }}>
       
@@ -184,6 +224,83 @@ export default function CourseDashboard({ courseId = null, sx = {} }) {
           </Box>
         )}
       </Box>
+      
+      {/* 📅 Фильтры для графика регистрации */}
+      <Paper elevation={1} sx={{ p: 2, mb: 3, bgcolor: 'background.paper' }}>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Typography variant="subtitle2" fontWeight={600}>📅 Период:</Typography>
+          
+          {/* Дата начала */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography variant="caption" color="text.secondary">С:</Typography>
+            <input
+              type="date"
+              value={enrollmentDates.start}
+              onChange={(e) => setEnrollmentDates(prev => ({ ...prev, start: e.target.value }))}
+              style={{ 
+                background: '#374151', border: '1px solid #4B5563', borderRadius: 4, 
+                padding: '6px 10px', color: '#fff', fontSize: '0.875rem' 
+              }}
+            />
+          </Box>
+          
+          {/* Дата конца */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography variant="caption" color="text.secondary">По:</Typography>
+            <input
+              type="date"
+              value={enrollmentDates.end}
+              onChange={(e) => setEnrollmentDates(prev => ({ ...prev, end: e.target.value }))}
+              style={{ 
+                background: '#374151', border: '1px solid #4B5563', borderRadius: 4, 
+                padding: '6px 10px', color: '#fff', fontSize: '0.875rem' 
+              }}
+            />
+          </Box>
+          
+          <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
+          
+          {/* Период группировки */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography variant="caption" color="text.secondary">Группировка:</Typography>
+            <Select
+              value={enrollmentPeriod}
+              onChange={(e) => setEnrollmentPeriod(e.target.value)}
+              size="small"
+              sx={{ 
+                minWidth: 100, 
+                '.MuiSelect-select': { py: 0.5, px: 1 },
+                bgcolor: '#374151',
+                color: '#fff'
+              }}
+            >
+              <MenuItem value="day">По дням</MenuItem>
+              <MenuItem value="week">По неделям</MenuItem>
+              <MenuItem value="month">По месяцам</MenuItem>
+            </Select>
+          </Box>
+          
+          {/* Кнопка сброса */}
+          <Box sx={{ ml: 'auto' }}>
+            <Chip 
+              label="✕ Сбросить" 
+              size="small" 
+              onClick={() => {
+                setEnrollmentDates({ start: '', end: '' });
+                setEnrollmentPeriod('month');
+              }}
+              variant="outlined"
+            />
+          </Box>
+        </Box>
+      </Paper>
+
+      {/* 📅 График регистрации студентов */}
+      <EnrollmentChart 
+        data={enrollmentData} 
+        period={enrollmentPeriod}
+        sx={{ mb: 4 }}
+      />
     </Container>
   );
 }

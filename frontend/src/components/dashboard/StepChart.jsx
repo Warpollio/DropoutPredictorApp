@@ -37,17 +37,17 @@ export default function StepChart({ data, metrics, sx = {} }) {
   }
 
   return (
-    <Paper elevation={2} sx={{ p: 2, overflow: 'hidden', ...sx }}>  {/* ← уменьшили padding */}
+    <Paper elevation={2} sx={{ p: 2, overflow: 'hidden', ...sx }}>
       <Typography variant="h6" gutterBottom color="text.primary">
         Активность по шагам
       </Typography>
       
-      <Box sx={{ width: '100%', height: 400 }}>  {/* ← фиксированная высота для ResponsiveContainer */}
+      <Box sx={{ width: '100%', height: 400 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             key={chartKey}
             data={chartData}
-            margin={{ top: 5, right: 15, left: 5, bottom: 35 }}  // ← компактные отступы
+            margin={{ top: 5, right: 15, left: 5, bottom: 35 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
             <XAxis 
