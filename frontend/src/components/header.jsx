@@ -7,7 +7,7 @@ function Header() {
 
   const navItems = [
     { path: '/', label: 'Загрузка', icon: <Upload /> },
-    { path: '/filters', label: 'Критерии', icon: <FilterList /> },
+    { path: '/features', label: 'Критерии', icon: <FilterList /> },
     { path: '/dashboard', label: 'Дашборд', icon: <Dashboard /> },
   ]
 

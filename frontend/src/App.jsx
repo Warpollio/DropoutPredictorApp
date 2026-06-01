@@ -2,7 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, CssBaseline } from '@mui/material';
 import Header from './components/Header';
 import UploadPage from './pages/UploadPage'; 
-import FilterPage from './pages/FilterPage';
+import FeaturePage from './pages/FeaturePage';
 import DashboardPage from './pages/DashboardPage';
 import { createTheme } from '@mui/material/styles'
 
@@ -23,7 +23,7 @@ function App() {
         <Header />
         <Routes>
           <Route path="/" element={<UploadPage />} /> 
-          <Route path="/filters" element={<FilterPage />} />
+          <Route path="/features" element={<FeaturePage />} />
           <Route path="/dashboard/:courseId?" element={<DashboardPage />} />
         </Routes>
       </Router>

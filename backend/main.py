@@ -12,6 +12,10 @@ from models import Course, Module, Step, Learner, Submission, Lesson, Comment
 from datetime import datetime, timedelta
 
 
+# Features_api
+from features_api import features_bp
+app.register_blueprint(features_bp)
+
 @app.route("/hello", methods=["GET"])
 def hello_world():
     return jsonify({"hello" : "world"})

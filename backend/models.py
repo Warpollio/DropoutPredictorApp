@@ -78,6 +78,11 @@ class Step(db.Model):
         back_populates="step", cascade="all, delete-orphan"
     )
 
+    user_step_features: Mapped[List["UserStepFeature"]] = relationship(
+        back_populates="step", foreign_keys="UserStepFeature.step_id",
+        cascade="all, delete-orphan", lazy="dynamic"
+    )
+
 
 class Learner(db.Model):
     __tablename__ = 'learner'
@@ -95,6 +100,19 @@ class Learner(db.Model):
     )
     comments: Mapped[List["Comment"]] = relationship(
         back_populates="learner", cascade="all, delete-orphan"
+    )
+
+    step_features: Mapped[List["UserStepFeature"]] = relationship(
+        back_populates="learner", foreign_keys="UserStepFeature.user_id",
+        cascade="all, delete-orphan", lazy="dynamic"
+    )
+    dropout_features: Mapped[Optional["UserDropoutFeature"]] = relationship(
+        back_populates="learner", foreign_keys="UserDropoutFeature.user_id",
+        lazy="select"
+    )
+    predictions: Mapped[List["DropoutPrediction"]] = relationship(
+        back_populates="learner", foreign_keys="DropoutPrediction.user_id",
+        cascade="all, delete-orphan", lazy="dynamic"
     )
 
 
@@ -154,4 +172,153 @@ class Comment(db.Model):
         back_populates="parent",
         cascade="all, delete-orphan",
         foreign_keys=[parent_comment_id]
+    )
+
+
+from sqlalchemy import JSON as JSONB
+
+
+class UserStepFeature(db.Model):
+    """
+    Фичи на уровне (пользователь, шаг):
+    как студент решал конкретный шаг (паттерны попыток).
+    """
+    __tablename__ = 'user_step_feature'
+    __table_args__ = (
+        Index('idx_usf_user', 'user_id'),
+        Index('idx_usf_step', 'step_id'),
+        Index('idx_usf_user_step', 'user_id', 'step_id', unique=True),
+        Index('idx_usf_calculated', 'calculated_at'),
+    )
+
+    # Composite PK: один ряд на пару (user, step)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey('learner.user_id', ondelete='CASCADE'),
+        primary_key=True
+    )
+    step_id: Mapped[int] = mapped_column(
+        ForeignKey('step.step_id', ondelete='CASCADE'),
+        primary_key=True
+    )
+
+    total_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    first_try_correct: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    errors_before_success: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    has_post_success_attempts: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+
+    # Последовательность попыток: "W,W,C,W"
+    attempt_sequence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+    feature_version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # v1, v2...
+
+
+    learner: Mapped["Learner"] = relationship(
+        back_populates="step_features", foreign_keys=[user_id]
+    )
+    step: Mapped["Step"] = relationship(
+        back_populates="user_step_features", foreign_keys=[step_id]
+    )
+
+
+class UserDropoutFeature(db.Model):
+    """
+    Агрегированные фичи на уровне пользователя — готовая строка для ML-модели.
+    """
+
+    __tablename__ = 'user_dropout_feature'
+    __table_args__ = (
+        Index('idx_udf_calculated', 'calculated_at'),
+        Index('idx_udf_version', 'feature_version'),
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey('learner.user_id', ondelete='CASCADE'),
+        primary_key=True
+    )
+
+
+    first_try_success_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_attempts_per_step: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    std_attempts_per_step: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    pct_steps_with_post_success: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_errors_before_success: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+
+    steps_completed: Mapped[int] = mapped_column(Integer, default=0)
+    max_step_reached: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_activity_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # === Тренды (вычисляются по времени/порядку шагов) ===
+    attempts_trend_slope: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # линейный регресс
+    is_sequence_escalating: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+
+    # === Сырые последовательности для нейросетей ===
+    global_attempt_pattern: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Пример: {"101": "W,W,C", "102": "C", "103": "W,W,W"}
+
+
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+    feature_version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prediction_cutoff_utc: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True, comment="До этой даты использовались данные"
+    )
+
+
+    learner: Mapped["Learner"] = relationship(
+        back_populates="dropout_features", foreign_keys=[user_id]
+    )
+
+
+class DropoutPrediction(db.Model):
+    """
+    Результаты работы ML-модели: вероятность отчисления + объяснения.
+    """
+    __tablename__ = 'dropout_prediction'
+    __table_args__ = (
+        Index('idx_dp_user_time', 'user_id', 'prediction_time'),
+        Index('idx_dp_model', 'model_version'),
+    )
+
+    prediction_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey('learner.user_id', ondelete='CASCADE'),
+        nullable=False,
+        index=True
+    )
+
+
+    dropout_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    predicted_label: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True, comment="True = предсказано отчисление"
+    )
+    confidence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+
+    top_features: Mapped[Optional[dict]] = mapped_column(
+        JSONB, nullable=True,
+        comment='{"avg_errors": 0.32, "steps_completed": -0.15, ...}'
+    )
+    explanation_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+
+    prediction_time: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+    model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    feature_snapshot_version: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, comment="Версия фич, на которых обучалась модель"
+    )
+    cutoff_used_utc: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True, comment="Данные до этой даты"
+    )
+
+
+    learner: Mapped["Learner"] = relationship(
+        back_populates="predictions", foreign_keys=[user_id]
     )
