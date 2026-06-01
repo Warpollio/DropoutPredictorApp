@@ -160,6 +160,99 @@ def import_structure(csv_filepath):
 
     print(f"Добавлено: Курсов={added_c}, Модулей={added_m}, Уроков={added_l}, Шагов={added_s}")
     return {"courses": added_c, "modules": added_m, "lessons": added_l, "steps": added_s}
+
+
+# ==============================================================================
+#  Обновление difficulty, discrimination
+# ==============================================================================
+
+def _bulk_update_steps(updates_list):
+    if not updates_list:
+        return
+
+
+    db.session.bulk_update_mappings(Step, updates_list)
+    db.session.commit()
+
+
+def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
+    """
+    Обновляет difficulty и discrimination для существующих шагов в таблице Step.
+    """
+    if not os.path.exists(csv_filepath):
+        print(f"⚠️ Файл не найден: {csv_filepath}")
+        return {"updated": 0, "skipped": 0, "not_found": 0}
+
+    print(f"🔄 [1/3] Обновление метрик шагов: {os.path.basename(csv_filepath)}")
+
+    # 1. Считаем статистику ДО обновления
+    total_before = db.session.execute(select(func.count()).select_from(Step)).scalar()
+
+    updates = []  # Список словарей для bulk_update_mappings
+    stats = {"updated": 0, "skipped": 0, "not_found": 0}
+    step_ids_to_update = set()
+
+    with open(csv_filepath, "r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            sid = row.get("step_id")
+            if not sid:
+                stats["skipped"] += 1
+                continue
+
+            try:
+                step_id = int(sid)
+                difficulty = float(row.get("difficulty") or 0.5)
+                discrimination = float(row.get("discrimination") or 0.5)
+
+                # Ограничиваем значения разумными пределами (опционально)
+                difficulty = max(0.0, min(1.0, difficulty))
+                discrimination = max(-1.0, min(1.0, discrimination))
+
+                updates.append({
+                    "step_id": step_id,
+                    "difficulty": difficulty,
+                    "discrimination": discrimination
+                })
+                step_ids_to_update.add(step_id)
+
+            except (ValueError, TypeError) as e:
+                print(f"⚠️ Ошибка парсинга строки (step_id={sid}): {e}")
+                stats["skipped"] += 1
+                continue
+
+            # Пакетное обновление при достижении лимита
+            if len(updates) >= batch_size:
+                _bulk_update_steps(updates)
+                stats["updated"] += len(updates)
+                updates.clear()
+
+    # Обрабатываем остатки
+    if updates:
+        _bulk_update_steps(updates)
+        stats["updated"] += len(updates)
+        updates.clear()
+
+    # 2. Проверяем, какие step_id реально существуют в БД
+    # (bulk_update_mappings молча игнорирует несуществующие записи)
+    if step_ids_to_update:
+        existing = db.session.execute(
+            select(Step.step_id).where(Step.step_id.in_(step_ids_to_update))
+        ).scalars().all()
+        stats["not_found"] = len(step_ids_to_update) - len(existing)
+
+    # 3. Финальная статистика
+    total_after = db.session.execute(select(func.count()).select_from(Step)).scalar()
+    added_new = total_after - total_before  # На случай, если функция расширится на upsert
+
+    print(f"✅ Обновлено: {stats['updated']} записей")
+    if stats["skipped"]:
+        print(f"⚠️ Пропущено (ошибки в CSV): {stats['skipped']}")
+    if stats["not_found"]:
+        print(f"⚠️ Не найдено в БД: {stats['not_found']} step_id")
+    if added_new > 0:
+        print(f"ℹ️  Добавлено новых шагов: {added_new}")
+
+    return stats
 # ==============================================================================
 # 2. Импорт пользователей
 # ==============================================================================

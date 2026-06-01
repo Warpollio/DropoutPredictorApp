@@ -8,6 +8,7 @@ import axios from 'axios';
 
 const IMPORT_TYPES = [
   { value: 'structure', label: '📊 Структура (Курсы/Модули/Шаги)' },
+  { value: 'step_metrics', label: 'Сложность шагов' },
   { value: 'learners', label: '👥 Пользователи' },
   { value: 'submissions', label: '📝 Попытки (Submissions)' },
   { value: 'comments', label: '💬 Комментарии' },

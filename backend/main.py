@@ -1,7 +1,7 @@
 from flask import  request, jsonify
 from config import app, db
 from models import Learner
-from csv_import import import_structure, import_learners, import_submissions, import_comments
+from csv_import import import_structure, import_learners, import_submissions, import_comments, update_step_metrics
 import os
 import tempfile
 
@@ -41,6 +41,8 @@ def api_import():
                 result = import_submissions(temp_path)
             elif import_type == 'comments':
                 result = import_comments(temp_path)
+            elif import_type == 'step_metrics':
+                result = update_step_metrics(temp_path)
             else:
                 return jsonify({"error": "Неизвестный тип импорта"}), 400
 
