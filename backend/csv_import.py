@@ -6,6 +6,7 @@ import click
 from config import app, db
 from models import Course, Module, Step, Learner, Submission, Comment, Lesson
 from sqlalchemy import insert, select, func
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 import os
 
@@ -27,15 +28,32 @@ def _parse_datetime(val):
     return None
 
 
-# Размер пакета для коммита (оптимально для SQLite)
+# Размер пакета для коммита
 BATCH_SIZE = 500
 
 def _bulk_insert_or_ignore(model, rows):
     """Вспомогательная функция для пакетной вставки INSERT OR IGNORE"""
     if not rows:
         return 0
-    # SQLAlchemy 2.0 + SQLite специфика
     stmt = insert(model).values(rows).prefix_with("OR IGNORE")
+    result = db.session.execute(stmt)
+    return result.rowcount
+
+def _bulk_upsert(model, data_list):
+    if not data_list:
+        return 0
+    
+    stmt = sqlite_insert(model).values(data_list)
+    
+    stmt = stmt.on_conflict_do_update(
+        index_elements=['submission_id'],
+        set_={
+            col.name: stmt.excluded[col.name] 
+            for col in model.__table__.columns 
+            if col.name != 'submission_id'
+        }
+    )
+    
     result = db.session.execute(stmt)
     return result.rowcount
 
@@ -107,7 +125,6 @@ def import_structure(csv_filepath):
                     "grading_policy": row.get("grading_policy")
                 })
 
-            # ⚠️ ВАЖНО: Step теперь ссылается на lesson_id, а не module_id
             if sid and lid:
                 steps.append({
                     "step_id": int(sid),
@@ -129,20 +146,19 @@ def import_structure(csv_filepath):
             if len(steps) >= BATCH_SIZE:
                 _bulk_insert_or_ignore(Step, steps); db.session.commit(); steps.clear()
 
-    # 2. Вставляем остатки
+    #Вставляем остатки
     if courses: _bulk_insert_or_ignore(Course, courses)
     if modules: _bulk_insert_or_ignore(Module, modules)
     if lessons: _bulk_insert_or_ignore(Lesson, lessons)
     if steps: _bulk_insert_or_ignore(Step, steps)
     db.session.commit()
 
-    # 3. Считаем записи ПОСЛЕ импорта → получаем точное число добавленных строк
     added_c = db.session.execute(select(func.count()).select_from(Course)).scalar() - c_before
     added_m = db.session.execute(select(func.count()).select_from(Module)).scalar() - m_before
     added_l = db.session.execute(select(func.count()).select_from(Lesson)).scalar() - l_before
     added_s = db.session.execute(select(func.count()).select_from(Step)).scalar() - s_before
 
-    print(f"   ✅ Добавлено: Курсов={added_c}, Модулей={added_m}, Уроков={added_l}, Шагов={added_s}")
+    print(f"Добавлено: Курсов={added_c}, Модулей={added_m}, Уроков={added_l}, Шагов={added_s}")
     return {"courses": added_c, "modules": added_m, "lessons": added_l, "steps": added_s}
 # ==============================================================================
 # 2. Импорт пользователей
@@ -181,16 +197,26 @@ def import_learners(csv_filepath):
 # ==============================================================================
 # 3. Импорт попыток (Submissions)
 # ==============================================================================
+def to_dt(val):
+    if not val or str(val).strip() == "":
+        return None
+    try:
+        return datetime.utcfromtimestamp(float(val))
+    except Exception as e:
+        print(f"Oшибка парсинга даты '{val}': {e}")
+        return None
+
 def import_submissions(csv_filepath):
     if not os.path.exists(csv_filepath):
-        print(f"⚠️ Файл не найден: {csv_filepath}")
+        print(f"Файл не найден: {csv_filepath}")
         return
 
-    print(f"📝 [3/4] Импорт попыток: {csv_filepath}")
+    print(f"Импорт попыток: {csv_filepath}")
     subs, added = [], 0
     total = 0
     with open(csv_filepath, "r", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+        for i, row in enumerate(csv.DictReader(f)):
+            #if i >= 100: break
             total += 1
             sid, step_id, uid = row.get("submission_id"), row.get("step_id"), row.get("user_id")
             if not sid or not step_id or not uid: continue
@@ -200,8 +226,8 @@ def import_submissions(csv_filepath):
                 "submission_id": int(sid),
                 "step_id": int(step_id),
                 "user_id": int(uid),
-                "attempt_time": _parse_datetime(row.get("attempt_time")),
-                "submission_time": _parse_datetime(row.get("submission_time")),
+                "attempt_time": to_dt(row.get("attempt_time")),
+                "submission_time": to_dt(row.get("submission_time")),
                 "status": row.get("status") or "pending",
                 "score": float(row["score"]) if row.get("score") else None,
                 "dataset": row.get("dataset") or None,
@@ -212,13 +238,13 @@ def import_submissions(csv_filepath):
             })
 
             if len(subs) >= BATCH_SIZE:
-                added += _bulk_insert_or_ignore(Submission, subs)
+                added += _bulk_upsert(Submission, subs)
                 db.session.commit()
                 subs.clear()
 
-    if subs: added += _bulk_insert_or_ignore(Submission, subs)
+    if subs: added += _bulk_upsert(Submission, subs)
     db.session.commit()
-    print(f"   ✅ Попыток добавлено: {added}")
+    print(f"Попыток добавлено: {added}")
     return {"submissions_added": added, "skipped": total - added}
 
 # ==============================================================================
