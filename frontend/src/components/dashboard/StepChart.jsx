@@ -14,13 +14,13 @@ export default function StepChart({ data, metrics, sx = {} }) {
 
   const chartData = useMemo(() => {
     return (data || []).map(item => ({
-      //step: `#${item.position}`,           // ← для оси X
-      step: item.step_id,           // ← для оси X
-      stepId: item.step_id,                // ← для тултипа
+      //step: `#${item.position}`,           //  для оси X
+      step: item.step_id,           //  для оси X
+      stepId: item.step_id,                // для тултипа
       moduleId: item.module_id,
       lessonId: item.lesson_id,
       position: item.position,
-      //stepType: item.step_type,            // ← опционально
+      //stepType: item.step_type,         
       ...Object.fromEntries(metrics.map(m => [m, item[m] ?? 0]))
     }));
   }, [data, metrics]);

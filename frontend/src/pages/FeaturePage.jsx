@@ -46,7 +46,7 @@ export default function FeaturePage() {
       {/* Заголовок */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
         <AutoFixHigh color="primary" />
-        <Typography variant="h6">Вычисление фич для предсказания отчисления</Typography>
+        <Typography variant="h6">Вычисление признаков для предсказания отчисления</Typography>
       </Box>
 
       <Divider sx={{ my: 2 }} />
@@ -90,7 +90,7 @@ export default function FeaturePage() {
 
         <Box sx={{ flex: '1 1 200px' }}>
           <Button variant="contained" onClick={handleCompute} disabled={loading} fullWidth>
-            {loading ? 'Вычисление...' : '🚀 Вычислить фичи'}
+            {loading ? 'Вычисление...' : 'Вычислить'}
           </Button>
         </Box>
       </Box>

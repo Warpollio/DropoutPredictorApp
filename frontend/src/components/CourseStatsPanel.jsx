@@ -3,7 +3,7 @@ import {
   Paper, Typography, FormControl, InputLabel, Select, MenuItem, 
   Box, Grid, Card, CardContent, Divider, Chip, CircularProgress, Alert 
 } from '@mui/material';
-import { School, Category, MenuBook, People, Assignment } from '@mui/icons-material'; // ← Добавлена иконка
+import { School, Category, MenuBook, People, Assignment } from '@mui/icons-material';
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -16,7 +16,7 @@ export default function CourseStatsPanel({ sx = {} }) {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [error, setError] = useState(null);
 
-  // Загрузка списка курсов при монтировании
+  // Загрузка списка курсов
   useEffect(() => {
     const fetchCourses = async () => {
       try {
@@ -141,7 +141,7 @@ export default function CourseStatsPanel({ sx = {} }) {
                 </Card>
               </Grid>
 
-              {/* Уроки (НОВОЕ) */}
+
               <Grid item xs={6} sm={4} md={2.4}>
                 <Card sx={{ bgcolor: 'action.hover' }}>
                   <CardContent sx={{ p: 2, textAlign: 'center' }}>

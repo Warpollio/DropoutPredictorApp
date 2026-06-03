@@ -43,7 +43,7 @@ export default function CSVUploader({ onUploadSuccess, sx = {} }) {
         timeout: 120000,
       });
       setResult(res.data);
-      // 👇 Вызываем коллбэк, если он передан (для обновления статистики)
+
       onUploadSuccess?.(res.data);
     } catch (err) {
       setError(err.response?.data?.error || 'Ошибка соединения с сервером');

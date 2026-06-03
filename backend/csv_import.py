@@ -13,10 +13,10 @@ import os
 from datetime import datetime
 
 def _parse_datetime(val):
-    """Безопасно парсит даты, убирая таймзону для SQLite"""
+
     if not val: return None
     val = str(val).strip()
-    # Убираем +00:00, +03:00 или Z
+
     if '+' in val: val = val.split('+')[0].strip()
     elif val.endswith('Z'): val = val[:-1].strip()
     
@@ -28,7 +28,7 @@ def _parse_datetime(val):
     return None
 
 
-# Размер пакета для коммита
+# Размер пакета
 BATCH_SIZE = 500
 
 def _bulk_insert_or_ignore(model, rows):
@@ -69,11 +69,10 @@ def import_data_cli(data_dir):
     import_learners(data_path / "course-122310-learners-2025-04-05-03-35-23.csv")
     import_submissions(data_path / "course-122310-submissions-full-2025-04-05-02-03-54.csv")
     import_comments(data_path / "course-122310-comments-2025-04-05-03-35-31.csv")
-    print("🎉 Импорт успешно завершён!")
+    print("🎉 Импорт успешно завершён")
 
-# ==============================================================================
+
 # 1. Импорт структуры (Course -> Module -> Step)
-# ==============================================================================
 def import_structure(csv_filepath):
     if not os.path.exists(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
@@ -81,7 +80,7 @@ def import_structure(csv_filepath):
 
     print(f"📦 [1/4] Импорт структуры: {os.path.basename(csv_filepath)}")
 
-    # 1. Считаем записи ДО импорта (для точной статистики)
+    # для статистики
     c_before = db.session.execute(select(func.count()).select_from(Course)).scalar()
     m_before = db.session.execute(select(func.count()).select_from(Module)).scalar()
     l_before = db.session.execute(select(func.count()).select_from(Lesson)).scalar()
@@ -136,7 +135,7 @@ def import_structure(csv_filepath):
                     "discrimination": 0.5
                 })
 
-            # Пакетный коммит при достижении лимита
+
             if len(courses) >= BATCH_SIZE:
                 _bulk_insert_or_ignore(Course, courses); db.session.commit(); courses.clear()
             if len(modules) >= BATCH_SIZE:
@@ -146,7 +145,7 @@ def import_structure(csv_filepath):
             if len(steps) >= BATCH_SIZE:
                 _bulk_insert_or_ignore(Step, steps); db.session.commit(); steps.clear()
 
-    #Вставляем остатки
+    # остатки
     if courses: _bulk_insert_or_ignore(Course, courses)
     if modules: _bulk_insert_or_ignore(Module, modules)
     if lessons: _bulk_insert_or_ignore(Lesson, lessons)
@@ -162,9 +161,8 @@ def import_structure(csv_filepath):
     return {"courses": added_c, "modules": added_m, "lessons": added_l, "steps": added_s}
 
 
-# ==============================================================================
-#  Обновление difficulty, discrimination
-# ==============================================================================
+
+# difficulty, discrimination
 
 def _bulk_update_steps(updates_list):
     if not updates_list:
@@ -176,16 +174,14 @@ def _bulk_update_steps(updates_list):
 
 
 def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
-    """
-    Обновляет difficulty и discrimination для существующих шагов в таблице Step.
-    """
+
     if not os.path.exists(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
         return {"updated": 0, "skipped": 0, "not_found": 0}
 
-    print(f"🔄 [1/3] Обновление метрик шагов: {os.path.basename(csv_filepath)}")
+    print(f"🔄  Обновление метрик шагов: {os.path.basename(csv_filepath)}")
 
-    # 1. Считаем статистику ДО обновления
+
     total_before = db.session.execute(select(func.count()).select_from(Step)).scalar()
 
     updates = []  # Список словарей для bulk_update_mappings
@@ -204,7 +200,7 @@ def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
                 difficulty = float(row.get("difficulty") or 0.5)
                 discrimination = float(row.get("discrimination") or 0.5)
 
-                # Ограничиваем значения разумными пределами (опционально)
+
                 difficulty = max(0.0, min(1.0, difficulty))
                 discrimination = max(-1.0, min(1.0, discrimination))
 
@@ -220,29 +216,28 @@ def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
                 stats["skipped"] += 1
                 continue
 
-            # Пакетное обновление при достижении лимита
+
             if len(updates) >= batch_size:
                 _bulk_update_steps(updates)
                 stats["updated"] += len(updates)
                 updates.clear()
 
-    # Обрабатываем остатки
+
     if updates:
         _bulk_update_steps(updates)
         stats["updated"] += len(updates)
         updates.clear()
 
-    # 2. Проверяем, какие step_id реально существуют в БД
-    # (bulk_update_mappings молча игнорирует несуществующие записи)
+
     if step_ids_to_update:
         existing = db.session.execute(
             select(Step.step_id).where(Step.step_id.in_(step_ids_to_update))
         ).scalars().all()
         stats["not_found"] = len(step_ids_to_update) - len(existing)
 
-    # 3. Финальная статистика
+    #  статистика
     total_after = db.session.execute(select(func.count()).select_from(Step)).scalar()
-    added_new = total_after - total_before  # На случай, если функция расширится на upsert
+    added_new = total_after - total_before 
 
     print(f"✅ Обновлено: {stats['updated']} записей")
     if stats["skipped"]:
@@ -253,15 +248,16 @@ def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
         print(f"ℹ️  Добавлено новых шагов: {added_new}")
 
     return stats
-# ==============================================================================
+
+
 # 2. Импорт пользователей
-# ==============================================================================
+
 def import_learners(csv_filepath):
     if not os.path.exists(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
         return
 
-    print(f"👥 [2/4] Импорт пользователей: {csv_filepath}")
+    print(f"👥 Импорт пользователей: {csv_filepath}")
     learners, added = [], 0
 
     with open(csv_filepath, "r", encoding="utf-8") as f:
@@ -287,9 +283,8 @@ def import_learners(csv_filepath):
     print(f"   ✅ Пользователей добавлено: {added}")
     return {"users_added": added}
 
-# ==============================================================================
+
 # 3. Импорт попыток (Submissions)
-# ==============================================================================
 def to_dt(val):
     if not val or str(val).strip() == "":
         return None
@@ -340,9 +335,8 @@ def import_submissions(csv_filepath):
     print(f"Попыток добавлено: {added}")
     return {"submissions_added": added, "skipped": total - added}
 
-# ==============================================================================
+
 # 4. Импорт комментариев
-# ==============================================================================
 def import_comments(csv_filepath):
     if not os.path.exists(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
@@ -381,9 +375,7 @@ def import_comments(csv_filepath):
     print(f"   ✅ Комментариев добавлено: {added}")
     return {"comments_added": added, "skipped": total - added}
 
-# ==============================================================================
-# Запуск как standalone скрипт
-# ==============================================================================
+
 if __name__ == "__main__":
     with app.app_context():
         data_dir = Path(__file__).resolve().parent.parent / "data"

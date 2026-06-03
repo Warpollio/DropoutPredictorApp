@@ -23,7 +23,6 @@ export default function ComputeForm({ onCompute, loading }) {
   return (
     <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-end' }}>
       
-      {/* User ID input — используем MUI TextField корректно */}
       <TextField
         label="User ID (опционально)"
         type="number"
@@ -37,7 +36,6 @@ export default function ComputeForm({ onCompute, loading }) {
         variant="outlined"
       />
 
-      {/* Native date input в вашем стиле */}
       <Box>
         <Typography variant="caption" display="block" sx={{ mb: 0.5, color: 'text.secondary' }}>
           Дата отсечения (cutoff)

@@ -8,32 +8,30 @@ import { Paper, Typography, Box } from '@mui/material';
 const formatFullDate = (rawDate, interval) => {
   if (!rawDate) return rawDate;
   
-  // Недели: формат '2024-W12' или '2024-12'
   if (interval === 'week') {
-    const clean = rawDate.replace('-W', '-'); // '2024-W12' → '2024-12'
+    const clean = rawDate.replace('-W', '-'); 
     const [year, week] = clean.split('-');
     return `Неделя ${week}, ${year}`;
   }
   
-  // Месяцы: '2024-01'
+  // Месяцы
   if (rawDate.length === 7 && rawDate.includes('-')) {
     const [year, month] = rawDate.split('-');
     const date = new Date(year, parseInt(month) - 1);
     return date.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
   }
   
-  // Дни: '2024-01-15'
+  // Дни
   if (rawDate.length === 10 && rawDate.includes('-')) {
     const [year, month, day] = rawDate.split('-');
     const date = new Date(year, parseInt(month) - 1, parseInt(day));
     return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
   }
   
-  // fallback
   return rawDate;
 };
 
-//Короткая метка для оси X
+//метка для оси X
 const formatShortLabel = (rawDate, interval) => {
   if (!rawDate) return rawDate;
   
@@ -79,7 +77,7 @@ export default function EnrollmentChart({ data, period, sx = {} }) {
   return (
     <Paper elevation={2} sx={{ p: 2, ...sx }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">📅 Новые студенты</Typography>
+        <Typography variant="h6">Новые студенты</Typography>
         <Typography variant="caption" color="text.secondary">
           {interval === 'month' && 'По месяцам'}
           {interval === 'week' && 'По неделям'}

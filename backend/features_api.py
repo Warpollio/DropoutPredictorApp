@@ -9,8 +9,8 @@ from models import Submission, UserStepFeature, UserDropoutFeature
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-# Создаём Blueprint. Все эндпоинты будут доступны по /api/features
 features_bp = Blueprint('features', __name__, url_prefix='/api/features')
+
 
 def _bulk_upsert(model, data_list, chunk_size=50):
     if not data_list:
@@ -38,9 +38,9 @@ def _bulk_upsert(model, data_list, chunk_size=50):
     return total_upserted
 
 
-
+# метрики для списка попыток одного шага
 def _compute_step_metrics(sub_list):
-    """Вычисляет метрики для списка попыток одного шага"""
+
     total = len(sub_list)
     if total == 0:
         return None
@@ -64,10 +64,10 @@ def _compute_step_metrics(sub_list):
         'calculated_at': datetime.utcnow()
     }
 
-
+#patams: cutoff_date, user_id
 @features_bp.route('/compute', methods=['POST'])
 def compute_features():
-    """Вычисляет и сохраняет метрики. Параметры: cutoff_date, user_id (опционально)"""
+
     data = request.get_json(silent=True) or {}
     cutoff_str = data.get('cutoff_date')
     user_id_filter = data.get('user_id')
@@ -77,7 +77,7 @@ def compute_features():
         try:
             cutoff = datetime.fromisoformat(cutoff_str.replace('Z', '+00:00'))
         except ValueError:
-            return jsonify({'error': 'Неверный формат cutoff_date. Используйте ISO 8601.'}), 400
+            return jsonify({'error': 'Неверный формат cutoff_date.'}), 400
 
     try:
 
@@ -102,11 +102,11 @@ def compute_features():
                 step_metrics.append(metrics)
                 user_metrics_map[metrics['user_id']].append(metrics)
 
-        # 3. Сохранение step-фич
+        # Сохранение
         if step_metrics:
             _bulk_upsert(UserStepFeature, step_metrics)
 
-        # 4. Агрегация user-фич
+        # Агрегация
         user_updates = []
         for uid, feats in user_metrics_map.items():
             n = len(feats) # количество попыток

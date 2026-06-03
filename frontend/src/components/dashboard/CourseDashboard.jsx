@@ -1,6 +1,5 @@
-// src/components/dashboard/CourseDashboard.jsx
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom'; // ← для навигации при выборе курса
+import { useNavigate } from 'react-router-dom';
 import { 
   Container, Box, Alert, CircularProgress, Divider, 
   Typography, Select, MenuItem, FormControl, Paper, Chip
@@ -11,23 +10,23 @@ import MetricToggle from './MetricToggle';
 import StepChart from './StepChart';
 import EnrollmentChart from './EnrollmentChart';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_URL = 'http://localhost:5000';
 
 export default function CourseDashboard({ courseId = null, sx = {} }) {
   const navigate = useNavigate(); // ← хук для смены маршрута
   
-  // 📊 Данные графика
+  // Данные графика
   const [data, setData] = useState([]);
   const [filters, setFilters] = useState({ modules: [], lessons: [] });
   
-  // 🎛 Фильтры и метрики
+  // Фильтры и метрики
   const [selectedMetrics, setSelectedMetrics] = useState(['submissions', 'successful', 'comments']);
   const [activeFilters, setActiveFilters] = useState({ module_id: null, lesson_id: null });
   
-  // 📚 Список курсов для пикера
+  // Список курсов для пикера
   const [courses, setCourses] = useState([]);
   
-  // ⚙️ Загрузка
+  // Загрузка
   const [loading, setLoading] = useState(true);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -37,14 +36,14 @@ export default function CourseDashboard({ courseId = null, sx = {} }) {
   // График поступлений
 
   const [enrollmentDates, setEnrollmentDates] = useState({
-  start: '',  // пустая строка = с начала времён
-  end: ''     // пустая строка = до сегодня
+  start: '',  
+  end: ''    
 });
 const [enrollmentPeriod, setEnrollmentPeriod] = useState('month'); // 'day' | 'week' | 'month'
 const [enrollmentData, setEnrollmentData] = useState([]);
 const [enrollmentLoading, setEnrollmentLoading] = useState(false);
 
-  // 🔹 Загружаем список курсов (один раз)
+  //список курсов
   useEffect(() => {
     const fetchCourses = async () => {
       try {
@@ -60,9 +59,9 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
     fetchCourses();
   }, []);
 
-  // 🔹 Загружаем статистику, если courseId есть
+  //статистика, если courseId есть
   useEffect(() => {
-    if (!courseId) return; // ← нет ID в URL → не грузим статистику
+    if (!courseId) return;
     
     const { module_id, lesson_id } = activeFilters;
     const metricsKey = selectedMetrics.join(',');
@@ -88,7 +87,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
         setFilters(res.data.filters);
         setError(null);
       } catch (err) {
-        console.error('❌ Ошибка:', err);
+        console.error('Ошибка:', err);
         setError(err.response?.data?.error || 'Не удалось загрузить статистику');
       } finally {
         setLoading(false);
@@ -118,7 +117,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
         );
         setEnrollmentData(res.data.data);
       } catch (err) {
-        console.error('❌ Ошибка загрузки enrollment:', err);
+        console.error('Ошибка загрузки enrollment:', err);
         setError('Не удалось загрузить статистику регистрации');
       } finally {
         setEnrollmentLoading(false);
@@ -128,23 +127,23 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
     fetchEnrollment();
   }, [courseId, enrollmentPeriod, enrollmentDates.start, enrollmentDates.end]);
 
-  // 🔄 При выборе курса — просто меняем URL
+  // При выборе курса — меняем URL
   const handleCourseChange = (event) => {
     const newId = event.target.value;
-    navigate(`/dashboard/${newId}`); // ← редирект на /dashboard/123
+    navigate(`/dashboard/${newId}`); // /dashboard/123
   };
 
-  // 🎨 Загрузка курсов
+  // Загрузка курсов
   if (coursesLoading) {
     return <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}><CircularProgress /></Box>;
   }
 
-  // 🎨 Нет курсов в БД
+  // Нет курсов
   if (courses.length === 0) {
     return <Container maxWidth="xl" sx={{ py: 8 }}><Alert severity="warning">Курсы не найдены</Alert></Container>;
   }
 
-  // 🎨 НЕТ courseId в URL → показываем пикер на весь экран
+  // НЕТ courseId в URL показываем пикер
   if (!courseId) {
     return (
       <Container maxWidth="md" sx={{ py: 8 }}>
@@ -183,11 +182,11 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
     );
   }
 
-  //ЕСТЬ courseId → показываем дэшборд
+  //показываем дэшборд
   return (
     <Container maxWidth="xl" sx={{ py: 4, ...sx }}>
       
-      {/* 🔝 Компактный селект для смены курса (всегда виден) */}
+      {/*селект для смены курса (всегда виден) */}
       <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center', flexWrap: 'wrap', p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
         <Typography variant="subtitle2" fontWeight={600}>Курс:</Typography>
         <FormControl sx={{ minWidth: 250, flex: 1 }} size="small">
@@ -225,7 +224,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
         )}
       </Box>
       
-      {/* 📅 Фильтры для графика регистрации */}
+      {/* Фильтры для графика регистрации */}
       <Paper elevation={1} sx={{ p: 2, mb: 3, bgcolor: 'background.paper' }}>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
           <Typography variant="subtitle2" fontWeight={600}>📅 Период:</Typography>
@@ -238,7 +237,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
               value={enrollmentDates.start}
               onChange={(e) => setEnrollmentDates(prev => ({ ...prev, start: e.target.value }))}
               style={{ 
-                background: '#374151', border: '1px solid #4B5563', borderRadius: 4, 
+                border: '1px solid #4B5563', borderRadius: 4, 
                 padding: '6px 10px', color: '#fff', fontSize: '0.875rem' 
               }}
             />
@@ -252,7 +251,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
               value={enrollmentDates.end}
               onChange={(e) => setEnrollmentDates(prev => ({ ...prev, end: e.target.value }))}
               style={{ 
-                background: '#374151', border: '1px solid #4B5563', borderRadius: 4, 
+                border: '1px solid #4B5563', borderRadius: 4, 
                 padding: '6px 10px', color: '#fff', fontSize: '0.875rem' 
               }}
             />
@@ -261,7 +260,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
           
           {/* Период группировки */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5,}}>
             <Typography variant="caption" color="text.secondary">Группировка:</Typography>
             <Select
               value={enrollmentPeriod}
@@ -270,8 +269,6 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
               sx={{ 
                 minWidth: 100, 
                 '.MuiSelect-select': { py: 0.5, px: 1 },
-                bgcolor: '#374151',
-                color: '#fff'
               }}
             >
               <MenuItem value="day">По дням</MenuItem>
@@ -295,7 +292,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
         </Box>
       </Paper>
 
-      {/* 📅 График регистрации студентов */}
+      {/* График регистрации студентов */}
       <EnrollmentChart 
         data={enrollmentData} 
         period={enrollmentPeriod}

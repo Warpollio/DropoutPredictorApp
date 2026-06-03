@@ -31,7 +31,7 @@ def api_import():
     if file.filename == '' or not import_type:
         return jsonify({"error": "Не указан файл или тип импорта"}), 400
 
-    # Сохраняем во временный файл для обработки
+    #временный файл для обработки
     temp_path = os.path.join(tempfile.gettempdir(), file.filename)
     file.save(temp_path)
 
@@ -53,13 +53,13 @@ def api_import():
         return jsonify({"message": "Импорт успешно завершён", "details": result}), 200
 
     except Exception as e:
-        # Логируем ошибку для разработчика
+
         app.logger.error(f"Ошибка импорта: {e}")
         return jsonify({"error": "Ошибка обработки файла. Проверьте логи сервера."}), 500
 
     finally:
         if os.path.exists(temp_path):
-            os.remove(temp_path)  # Чистим временный файл
+            os.remove(temp_path) 
 
 
 
@@ -69,25 +69,25 @@ def api_import():
 def get_courses_stats():
     """Возвращает список курсов с базовой статистикой"""
     try:
-        # 1. Модули в курсе (без изменений)
+
         modules_count = select(func.count(Module.module_id)).where(
             Module.course_id == Course.course_id
         ).scalar_subquery()
         
-        # 2. Уроки (НОВОЕ)
+
         lessons_count = select(func.count(Lesson.lesson_id)).where(
             Lesson.module_id == Module.module_id,
             Module.course_id == Course.course_id
         ).scalar_subquery()
         
-        # 3. Шаги (ОБНОВЛЕНО: цепочка теперь идёт через Lesson)
+
         steps_count = select(func.count(Step.step_id)).where(
             Step.lesson_id == Lesson.lesson_id,
             Lesson.module_id == Module.module_id,
             Module.course_id == Course.course_id
         ).scalar_subquery()
         
-        # 4. Попытки (ОБНОВЛЕНО: цепочка теперь идёт через Lesson)
+
         submissions_count = select(func.count(Submission.submission_id)).where(
             Submission.step_id == Step.step_id,
             Step.lesson_id == Lesson.lesson_id,
@@ -139,19 +139,19 @@ def get_course_details(course_id):
         if not course:
             return jsonify({'error': 'Курс не найден'}), 404
         
-        # 1. Модули в курсе
+
         modules_count = db.session.execute(
             select(func.count(Module.module_id)).where(Module.course_id == course_id)
         ).scalar()
         
-        # 2. Уроки в модулях курса (НОВОЕ)
+
         lessons_count = db.session.execute(
             select(func.count(Lesson.lesson_id))
             .join(Module, Lesson.module_id == Module.module_id)
             .where(Module.course_id == course_id)
         ).scalar()
         
-        # 3. Шаги в уроках курса (ОБНОВЛЕНО: цепочка через Lesson)
+
         steps_count = db.session.execute(
             select(func.count(Step.step_id))
             .join(Lesson, Step.lesson_id == Lesson.lesson_id)
@@ -159,7 +159,7 @@ def get_course_details(course_id):
             .where(Module.course_id == course_id)
         ).scalar()
         
-        # 4. Уникальные пользователи с попытками в этом курсе (ОБНОВЛЕНО)
+
         active_learners = db.session.execute(
             select(func.count(Submission.user_id.distinct()))
             .join(Step, Submission.step_id == Step.step_id)
@@ -168,7 +168,7 @@ def get_course_details(course_id):
             .where(Module.course_id == course_id)
         ).scalar()
         
-        # 5. Общее число попыток в этом курсе (ОБНОВЛЕНО)
+
         submissions_count = db.session.execute(
             select(func.count(Submission.submission_id))
             .join(Step, Submission.step_id == Step.step_id)
@@ -177,7 +177,7 @@ def get_course_details(course_id):
             .where(Module.course_id == course_id)
         ).scalar()
         
-        # Общее число пользователей в БД (SA 2.0 стиль)
+
         total_learners = db.session.execute(
             select(func.count(Learner.user_id))
         ).scalar()
@@ -203,28 +203,21 @@ def get_course_details(course_id):
         app.logger.error(f"Ошибка получения деталей курса {course_id}: {e}")
         return jsonify({'error': 'Не удалось загрузить детали курса'}), 500
 
+#query params: module_id, lesson_id, metrics(submissions, successful, comments)
 @app.route('/api/courses/<int:course_id>/step-stats', methods=['GET'])
 def get_course_step_stats(course_id):
-    """
-    Возвращает статистику по шагам курса с фильтрами.
-    
-    Параметры запроса (query params):
-    - module_id: фильтр по модулю (опционально)
-    - lesson_id: фильтр по уроку (опционально)
-    - metrics: список метрик через запятую (submissions, successful, comments)
-    """
+
     try:
-        # Проверяем существование курса
+
         course = db.session.get(Course, course_id)
         if not course:
             return jsonify({'error': 'Курс не найден'}), 404
         
-        # Получаем параметры фильтрации
+
         module_id = request.args.get('module_id', type=int)
         lesson_id = request.args.get('lesson_id', type=int)
         metrics = request.args.get('metrics', 'submissions,successful,comments').split(',')
-        
-        # Базовый запрос: все шаги курса с позицией
+
         query = select(
             Step.step_id,
             Step.position.label('step_position'),
@@ -235,7 +228,7 @@ def get_course_step_stats(course_id):
          .join(Module, Lesson.module_id == Module.module_id)\
          .where(Module.course_id == course_id)
         
-        # Применяем фильтры
+        #  фильтры
         if module_id:
             query = query.where(Lesson.module_id == module_id)
         if lesson_id:
@@ -265,7 +258,7 @@ def get_course_step_stats(course_id):
                 )
                 step_data['submissions'] = db.session.execute(sub_query).scalar() or 0
                 
-                # Успешные попытки (статус = 'correct' ИЛИ балл >= 0.8)
+                # Успешные попытки
                 if 'successful' in metrics:
                     success_query = select(func.count(Submission.submission_id)).where(
                         and_(
@@ -275,7 +268,7 @@ def get_course_step_stats(course_id):
                     )
                     step_data['successful'] = db.session.execute(success_query).scalar() or 0
             
-            # Комментарии к шагу
+            # Комментарии
             if 'comments' in metrics:
                 comment_query = select(func.count(Comment.comment_id)).where(
                     and_(
@@ -320,30 +313,21 @@ def get_course_step_stats(course_id):
         app.logger.error(f"Ошибка статистики шагов: {e}")
         return jsonify({'error': 'Не удалось загрузить статистику'}), 500
 
+#params: start_date, end_date interval('day' | 'week' | 'month')
 @app.route('/api/courses/<int:course_id>/enrollment', methods=['GET'])
 def get_course_enrollment(course_id):
-    """
-    Статистика регистрации студентов по датам (SQLite).
-    
-    Формат даты в БД: 'YYYY-MM-DD HH:MM:SS.ffffff'
-    
-    Query params:
-    - start_date: YYYY-MM-DD (опционально)
-    - end_date: YYYY-MM-DD (опционально)
-    - interval: 'day' | 'week' | 'month' (по умолчанию 'month')
-    """
     try:
-        # Проверяем существование курса
+
         course = db.session.get(Course, course_id)
         if not course:
             return jsonify({'error': 'Курс не найден'}), 404
         
-        #Получаем параметры запроса
-        interval = request.args.get('interval', 'month')  # day | week | month
-        start_date = request.args.get('start_date')       # 'YYYY-MM-DD' или None
-        end_date = request.args.get('end_date')           # 'YYYY-MM-DD' или None
+        #параметры запроса
+        interval = request.args.get('interval', 'month') 
+        start_date = request.args.get('start_date')     
+        end_date = request.args.get('end_date')        
         
-        # Формат для группировки (SQLite strftime)
+
         if interval == 'week':
             date_format = '%Y-%W'    # '2024-12' (год-неделя)
         elif interval == 'month':
@@ -355,7 +339,7 @@ def get_course_enrollment(course_id):
             func.strftime(date_format, Learner.date_joined_utc).label('date'),
             func.count(Learner.user_id).label('count')
         ).where(
-            Learner.date_joined_utc.isnot(None)  # исключаем NULL
+            Learner.date_joined_utc.isnot(None) 
         )
         
         # Фильтры по датам
