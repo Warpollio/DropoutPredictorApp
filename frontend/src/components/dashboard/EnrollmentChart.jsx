@@ -66,6 +66,12 @@ export default function EnrollmentChart({ data, period, sx = {} }) {
     }));
   }, [data, interval]);
 
+
+  const maxVisibleTicks = 12;
+  const tickInterval = chartData.length > maxVisibleTicks 
+    ? Math.ceil(chartData.length / maxVisibleTicks) - 1 
+    : 0;
+
   if (!data?.length) {
     return (
       <Paper sx={{ p: 4, textAlign: 'center', minHeight: 250, ...sx }}>
@@ -97,8 +103,8 @@ export default function EnrollmentChart({ data, period, sx = {} }) {
               angle={-45} 
               textAnchor="end" 
               height={50}
-              interval={0}
-              minTickGap={10}
+              interval={tickInterval}   // динамический интервал
+              minTickGap={15}           // не ближе 15px
             />
             
             <YAxis 

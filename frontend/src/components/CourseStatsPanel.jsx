@@ -180,7 +180,7 @@ export default function CourseStatsPanel({ sx = {} }) {
                       {details.stats.active_learners}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Активных студентов
+                      Студентов
                     </Typography>
                   </CardContent>
                 </Card>

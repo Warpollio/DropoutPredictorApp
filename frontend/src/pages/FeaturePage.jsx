@@ -122,52 +122,7 @@ export default function FeaturePage() {
 
       <Divider sx={{ my: 3 }} />
 
-      {/* Справочные карточки */}
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>📋 Что вычисляется:</Typography>
       
-      <Box sx={{ 
-        display: 'grid', 
-        gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1fr 1fr 1fr' }, 
-        gap: 2 
-      }}>
-        <Card sx={{ bgcolor: 'action.hover' }}>
-          <CardContent sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-              <DataObject color="primary" fontSize="small" />
-              <Typography variant="subtitle2" fontWeight={600}>На уровне шага</Typography>
-            </Box>
-            <Typography variant="body2" color="text.secondary">
-              Число попыток, ошибки до успеха, паттерн (W,W,C)
-            </Typography>
-          </CardContent>
-        </Card>
-
-        <Card sx={{ bgcolor: 'action.hover' }}>
-          <CardContent sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-              <Person color="primary" fontSize="small" />
-              <Typography variant="subtitle2" fontWeight={600}>На уровне пользователя</Typography>
-            </Box>
-            <Typography variant="body2" color="text.secondary">
-              Успех с 1-й попытки, тренд попыток, % «залипаний»
-            </Typography>
-          </CardContent>
-        </Card>
-
-        <Card sx={{ bgcolor: 'action.hover', border: '1px dashed', borderColor: 'divider' }}>
-          <CardContent sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-              <WarningAmber color="warning" fontSize="small" />
-              <Typography variant="subtitle2" fontWeight={600}>💡 Совет</Typography>
-            </Box>
-            <Typography component="span" variant="body2" color="text.secondary">
-              Для теста укажите 
-              <Chip label="User ID" size="small" variant="outlined" sx={{ verticalAlign: 'middle', mx: 0.5 }} />. 
-              Для полного пересчёта оставьте поле пустым.
-            </Typography>
-          </CardContent>
-        </Card>
-      </Box>
     </Paper>
   );
 }

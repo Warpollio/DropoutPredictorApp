@@ -317,74 +317,100 @@ def get_course_step_stats(course_id):
 @app.route('/api/courses/<int:course_id>/enrollment', methods=['GET'])
 def get_course_enrollment(course_id):
     try:
-
+        from datetime import datetime, timedelta
+        
         course = db.session.get(Course, course_id)
         if not course:
             return jsonify({'error': 'Курс не найден'}), 404
         
-        #параметры запроса
+        # Параметры запроса
         interval = request.args.get('interval', 'month') 
-        start_date = request.args.get('start_date')     
-        end_date = request.args.get('end_date')        
+        start_date_str = request.args.get('start_date')     
+        end_date_str = request.args.get('end_date')
         
-
+        # 🔹 Парсим даты (с дефолтами)
+        end_date = datetime.utcnow() if not end_date_str else datetime.strptime(end_date_str, '%Y-%m-%d')
+        
+        if not start_date_str:
+            first = db.session.execute(
+                select(func.min(Learner.date_joined_utc)).where(Learner.date_joined_utc.isnot(None))
+            ).scalar()
+            start_date = first if first else datetime.utcnow()
+        else:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+        
+        # Формат группировки для SQLite
         if interval == 'week':
-            date_format = '%Y-%W'    # '2024-12' (год-неделя)
+            date_format = '%Y-%W'
         elif interval == 'month':
-            date_format = '%Y-%m'    # '2024-01'
+            date_format = '%Y-%m'
         else:  # day
-            date_format = '%Y-%m-%d' # '2024-01-15'
+            date_format = '%Y-%m-%d'
         
+        # 🔹 Запрос: считаем регистрации по датам
         query = select(
             func.strftime(date_format, Learner.date_joined_utc).label('date'),
             func.count(Learner.user_id).label('count')
         ).where(
-            Learner.date_joined_utc.isnot(None) 
-        )
-        
-        # Фильтры по датам
-        if start_date:
-            # strftime('%Y-%m-%d', ...) извлекает дату из '2024-01-15 10:30:00'
-            query = query.where(
-                func.strftime('%Y-%m-%d', Learner.date_joined_utc) >= start_date
-            )
-        if end_date:
-            query = query.where(
-                func.strftime('%Y-%m-%d', Learner.date_joined_utc) <= end_date
-            )
-        
-        query = query.group_by('date').order_by('date')
+            Learner.date_joined_utc.isnot(None),
+            func.strftime('%Y-%m-%d', Learner.date_joined_utc) >= start_date.strftime('%Y-%m-%d'),
+            func.strftime('%Y-%m-%d', Learner.date_joined_utc) <= end_date.strftime('%Y-%m-%d')
+        ).group_by('date').order_by('date')
         
         rows = db.session.execute(query).all()
+        data_dict = {row.date: row.count for row in rows}
         
-        #Формируем ответ
-        # data = [{'date': row.date, 'count': row.count} for row in rows]
-        data = []
-        for row in rows:
-            date_str = row.date  # '2024-12' для недель
-            # Если интервал недель и строка похожа на 'YYYY-NN'
-            if interval == 'week' and len(date_str) == 7 and date_str[4] == '-':
-                year, week = date_str.split('-')
-                date_str = f"{year}-W{week}"  # '2024-W12'
+        # 🔹 Генерируем полный диапазон дат (исправлено!)
+        filled_data = []
+        
+        if interval == 'month':
+            # Нормализуем к 1-му числу — избегаем ошибки "day out of range"
+            current = start_date.replace(day=1)
+            end_norm = end_date.replace(day=1)
             
-            data.append({'date': date_str, 'count': row.count})
+            while current <= end_norm:
+                key = current.strftime('%Y-%m')
+                if current.month == 12:
+                    current = current.replace(year=current.year + 1, month=1)
+                else:
+                    current = current.replace(month=current.month + 1)
+                
+                filled_data.append({'date': key, 'count': data_dict.get(key, 0)})
+                
+        elif interval == 'week':
+            current = start_date
+            while current <= end_date:
+                key = current.strftime('%Y-%W')
+                # Форматируем для фронта: '2024-12' → '2024-W12'
+                display_key = key
+                if len(key) == 7 and key[4] == '-':
+                    year, week = key.split('-')
+                    display_key = f"{year}-W{week}"
+                
+                filled_data.append({'date': display_key, 'count': data_dict.get(key, 0)})
+                current += timedelta(days=7)
+                
+        else:  # day
+            current = start_date
+            while current <= end_date:
+                key = current.strftime('%Y-%m-%d')
+                filled_data.append({'date': key, 'count': data_dict.get(key, 0)})
+                current += timedelta(days=1)
         
         return jsonify({
             'course_id': course_id,
             'period': {
                 'interval': interval,
-                'start': start_date,
-                'end': end_date
+                'start': start_date_str,
+                'end': end_date_str
             },
-            'total_new_learners': sum(d['count'] for d in data),
-            'data': data
+            'total_new_learners': sum(d['count'] for d in filled_data),
+            'data': filled_data
         }), 200
         
     except Exception as e:
         app.logger.error(f"Ошибка enrollment: {e}")
         return jsonify({'error': 'Не удалось загрузить статистику'}), 500
-
-
 
 if __name__ == "__main__":
     with app.app_context():
