@@ -5,7 +5,7 @@ from csv_import import import_structure, import_learners, import_submissions, im
 import os
 import tempfile
 
-from sqlalchemy import func, select, and_
+from sqlalchemy import func, select, and_, update
 from models import Course, Module, Step, Learner, Submission, Lesson, Comment
 
 #from sqlalchemy import func, cast, Date
@@ -39,6 +39,7 @@ def api_import():
         with app.app_context():
             if import_type == 'structure':
                 result = import_structure(temp_path)
+                sync_step_stats()
             elif import_type == 'learners':
                 result = import_learners(temp_path)
             elif import_type == 'submissions':
@@ -202,116 +203,198 @@ def get_course_details(course_id):
     except Exception as e:
         app.logger.error(f"Ошибка получения деталей курса {course_id}: {e}")
         return jsonify({'error': 'Не удалось загрузить детали курса'}), 500
-
+'''
 #query params: module_id, lesson_id, metrics(submissions, successful, comments)
 @app.route('/api/courses/<int:course_id>/step-stats', methods=['GET'])
 def get_course_step_stats(course_id):
-
+    print("step_stats start")
     try:
-
         course = db.session.get(Course, course_id)
         if not course:
             return jsonify({'error': 'Курс не найден'}), 404
         
-
         module_id = request.args.get('module_id', type=int)
         lesson_id = request.args.get('lesson_id', type=int)
-        metrics = request.args.get('metrics', 'submissions,successful,comments').split(',')
+        metrics = [m.strip() for m in request.args.get('metrics', 'submissions,successful,comments').split(',')]
 
-        query = select(
+        # 1️⃣ Базовые шаги (с фильтрами)
+        steps_query = select(
             Step.step_id,
             Step.position.label('step_position'),
             Step.step_type,
             Lesson.lesson_id.label('lesson_id'),
-            Lesson.module_id.label('module_id') 
+            Lesson.module_id.label('module_id')
         ).join(Lesson, Step.lesson_id == Lesson.lesson_id)\
          .join(Module, Lesson.module_id == Module.module_id)\
          .where(Module.course_id == course_id)
         
-        #  фильтры
+        if module_id:
+            steps_query = steps_query.where(Lesson.module_id == module_id)
+        if lesson_id:
+            steps_query = steps_query.where(Step.lesson_id == lesson_id)
+        
+        steps_query = steps_query.order_by(Module.position, Lesson.position, Step.position)
+        steps = db.session.execute(steps_query).all()
+        
+        if not steps:
+            # Если шагов нет → пустой ответ, но мета-данные фильтров всё равно нужны
+            filters_meta = _get_filters_meta(course_id)
+            return jsonify({'course_id': course_id, 'course_name': course.name, 'metrics': metrics, 'filters': filters_meta, 'data': []}), 200
+
+        step_ids = [s.step_id for s in steps]
+
+        # 2️⃣ Агрегируем попытки ОДНИМ запросом
+        sub_stats = {}
+        if 'submissions' in metrics or 'successful' in metrics:
+            res = db.session.execute(
+                select(
+                    Submission.step_id,
+                    func.count(Submission.submission_id).label('total'),
+                    func.count(Submission.submission_id).filter(
+                        (Submission.status == 'correct') | (Submission.score >= 0.8)
+                    ).label('successful')
+                ).where(Submission.step_id.in_(step_ids))
+                 .group_by(Submission.step_id)
+            )
+            sub_stats = {row.step_id: {'submissions': row.total, 'successful': row.successful} for row in res}
+
+        # 3️⃣ Агрегируем комментарии ОДНИМ запросом
+        com_stats = {}
+        if 'comments' in metrics:
+            res = db.session.execute(
+                select(Comment.step_id, func.count(Comment.comment_id).label('count'))
+                .where(and_(Comment.step_id.in_(step_ids), Comment.deleted == False))
+                .group_by(Comment.step_id)
+            )
+            com_stats = {row.step_id: row.count for row in res}
+
+        # 4️ Собираем финальный результат в Python (мгновенно)
+        result = []
+        for s in steps:
+            d = {
+                'step_id': s.step_id,
+                'position': s.step_position,
+                'step_type': s.step_type,
+                'lesson_id': s.lesson_id,
+                'module_id': s.module_id
+            }
+            if 'submissions' in metrics:
+                stats = sub_stats.get(s.step_id, {})
+                d['submissions'] = stats.get('submissions', 0)
+                if 'successful' in metrics:
+                    d['successful'] = stats.get('successful', 0)
+            if 'comments' in metrics:
+                d['comments'] = com_stats.get(s.step_id, 0)
+            result.append(d)
+
+        filters_meta = _get_filters_meta(course_id)
+        print("step_stats finish")
+        
+        return jsonify({
+            'course_id': course_id,
+            'course_name': course.name,
+            'metrics': metrics,
+            'filters': filters_meta,
+            'data': result
+        }), 200
+
+    except Exception as e:
+        app.logger.error(f"Ошибка статистики шагов: {e}")
+        return jsonify({'error': 'Не удалось загрузить статистику'}), 500
+'''
+@app.route('/api/courses/<int:course_id>/step-stats', methods=['GET'])
+def get_course_step_stats(course_id):
+    print("step_stats start")
+    try:
+        course = db.session.get(Course, course_id)
+        if not course:
+            return jsonify({'error': 'Курс не найден'}), 404
+        
+        module_id = request.args.get('module_id', type=int)
+        lesson_id = request.args.get('lesson_id', type=int)
+        metrics = [m.strip() for m in request.args.get('metrics', 'submissions,successful,comments').split(',')]
+
+        query = select(
+            Step.step_id, Step.position, Step.step_type,
+            Lesson.lesson_id, Lesson.module_id,
+            Step.submissions_count, Step.successful_count, Step.comments_count
+        ).join(Lesson, Step.lesson_id == Lesson.lesson_id)\
+        .join(Module, Lesson.module_id == Module.module_id)\
+        .where(Module.course_id == course_id)\
+        .order_by(Module.position, Lesson.position, Step.position)
+        
         if module_id:
             query = query.where(Lesson.module_id == module_id)
         if lesson_id:
             query = query.where(Step.lesson_id == lesson_id)
         
-        #query = query.order_by(Step.position) #   ordering
-        #query = query.order_by(Step.step_id) #   ordering
         query = query.order_by(Module.position, Lesson.position, Step.position)
-        
-        steps = db.session.execute(query).all()
-        
-        result = []
-        for step in steps:
-            step_data = {
-                'step_id': step.step_id,
-                'position': step.step_position,
-                'step_type': step.step_type,
-                'lesson_id': step.lesson_id,
-                'module_id': step.module_id
-            }
             
-            # Подзапросы для метрик (выполняются только если запрошены)
-            if 'submissions' in metrics or 'successful' in metrics:
-                # Общее количество попыток на шаг
-                sub_query = select(func.count(Submission.submission_id)).where(
-                    Submission.step_id == step.step_id
-                )
-                step_data['submissions'] = db.session.execute(sub_query).scalar() or 0
-                
-                # Успешные попытки
-                if 'successful' in metrics:
-                    success_query = select(func.count(Submission.submission_id)).where(
-                        and_(
-                            Submission.step_id == step.step_id,
-                            (Submission.status == 'correct') | (Submission.score >= 0.8)
-                        )
-                    )
-                    step_data['successful'] = db.session.execute(success_query).scalar() or 0
-            
-            # Комментарии
-            if 'comments' in metrics:
-                comment_query = select(func.count(Comment.comment_id)).where(
-                    and_(
-                        Comment.step_id == step.step_id,
-                        Comment.deleted == False
-                    )
-                )
-                step_data['comments'] = db.session.execute(comment_query).scalar() or 0
-            
-            result.append(step_data)
+        rows = db.session.execute(query).all()
         
-        # Мета-информация для фильтров
-        filters_meta = {
-            'modules': [
-                {'id': m.module_id, 'name': f"Module {m.module_id}", 'position': m.position}
-                for m in db.session.execute(
-                    select(Module.module_id, Module.position)
-                    .where(Module.course_id == course_id)
-                    .order_by(Module.position)
-                ).all()
-            ],
-            'lessons': [
-                {'id': l.lesson_id, 'name': f"Lesson {l.lesson_id}", 'module_id': l.module_id, 'position': l.position}
-                for l in db.session.execute(
-                    select(Lesson.lesson_id, Lesson.module_id, Lesson.position)
-                    .join(Module, Lesson.module_id == Module.module_id)
-                    .where(Module.course_id == course_id)
-                    .order_by(Lesson.position)
-                ).all()
-            ]
-        }
+        data = [{
+            'step_id': r.step_id,
+            'position': r.position,
+            'step_type': r.step_type,
+            'lesson_id': r.lesson_id,
+            'module_id': r.module_id,
+            'submissions': r.submissions_count,
+            'successful': r.successful_count,
+            'comments': r.comments_count
+        } for r in rows]
+        
+        filters_meta = _get_filters_meta(course_id)
+        print("step_stats finish")
         
         return jsonify({
             'course_id': course_id,
             'course_name': course.name,
-            'metrics': [m.strip() for m in metrics],
+            'metrics': metrics,
             'filters': filters_meta,
-            'data': result
+            'data': data
         }), 200
-        
+
     except Exception as e:
         app.logger.error(f"Ошибка статистики шагов: {e}")
         return jsonify({'error': 'Не удалось загрузить статистику'}), 500
+
+# Вынесем мета-данные в отдельную функцию для чистоты
+def _get_filters_meta(course_id):
+    modules = [
+        {'id': m.module_id, 'name': f"Module {m.module_id}", 'position': m.position}
+        for m in db.session.execute(
+            select(Module.module_id, Module.position).where(Module.course_id == course_id).order_by(Module.position)
+        ).all()
+    ]
+    lessons = [
+        {'id': l.lesson_id, 'name': f"Lesson {l.lesson_id}", 'module_id': l.module_id, 'position': l.position}
+        for l in db.session.execute(
+            select(Lesson.lesson_id, Lesson.module_id, Lesson.position)
+            .join(Module, Lesson.module_id == Module.module_id)
+            .where(Module.course_id == course_id).order_by(Lesson.position)
+        ).all()
+    ]
+    return {'modules': modules, 'lessons': lessons}
+
+
+def sync_step_stats():
+    print("!sync_start")
+    steps = db.session.execute(select(Step.step_id)).scalars().all()
+    for sid in steps:
+        db.session.execute(
+            update(Step).where(Step.step_id == sid).values(
+                submissions_count=select(func.count(Submission.submission_id)).where(Submission.step_id == sid).scalar_subquery(),
+                successful_count=select(func.count(Submission.submission_id)).where(
+                    and_(Submission.step_id == sid, (Submission.status == 'correct') | (Submission.score >= 0.8))
+                ).scalar_subquery(),
+                comments_count=select(func.count(Comment.comment_id)).where(
+                    and_(Comment.step_id == sid, Comment.deleted == False)
+                ).scalar_subquery()
+            )
+        )
+    print("!sync_finish")
+    db.session.commit()
+
 
 #params: start_date, end_date interval('day' | 'week' | 'month')
 @app.route('/api/courses/<int:course_id>/enrollment', methods=['GET'])
@@ -412,8 +495,17 @@ def get_course_enrollment(course_id):
         app.logger.error(f"Ошибка enrollment: {e}")
         return jsonify({'error': 'Не удалось загрузить статистику'}), 500
 
+from flask.cli import with_appcontext
+import click
+
+# Добавляем команду: flask sync-stats
+@app.cli.command("sync-stats")
+@with_appcontext
+def sync_stats_command():
+    click.echo("🔄 Запуск синхронизации статистики...")
+    sync_step_stats()
+
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-
     app.run(debug=True)

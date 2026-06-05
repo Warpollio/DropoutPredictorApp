@@ -49,7 +49,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const res = await axios.get(`${API_URL}/api/courses/stats`, { timeout: 10000 });
+        const res = await axios.get(`${API_URL}/api/courses/stats`, { timeout: 100000 });
         setCourses(res.data.courses || []);
       } catch (err) {
         console.error('❌ Ошибка загрузки курсов:', err);
@@ -83,7 +83,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
         });
         
         const url = `${API_URL}/api/courses/${courseId}/step-stats?${params}`;
-        const res = await axios.get(url, { timeout: 10000 });
+        const res = await axios.get(url, { timeout: 100000 });
         
         setData(res.data.data);
         setFilters(res.data.filters);

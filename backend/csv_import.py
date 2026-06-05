@@ -29,7 +29,7 @@ def _parse_datetime(val):
 
 
 # Размер пакета
-BATCH_SIZE = 500
+BATCH_SIZE = 10000
 
 def _bulk_insert_or_ignore(model, rows):
     """Вспомогательная функция для пакетной вставки INSERT OR IGNORE"""
@@ -293,7 +293,7 @@ def to_dt(val):
     except Exception as e:
         print(f"Oшибка парсинга даты '{val}': {e}")
         return None
-
+'''
 def import_submissions(csv_filepath):
     if not os.path.exists(csv_filepath):
         print(f"Файл не найден: {csv_filepath}")
@@ -334,7 +334,106 @@ def import_submissions(csv_filepath):
     db.session.commit()
     print(f"Попыток добавлено: {added}")
     return {"submissions_added": added, "skipped": total - added}
+'''
+from sqlalchemy import text
 
+UPSERT_QUERY = text("""
+    INSERT INTO submission (
+        submission_id, step_id, user_id, attempt_time, submission_time,
+        status, score, dataset, clue, reply, reply_clear, hint
+    )
+    VALUES (
+        :submission_id, :step_id, :user_id, :attempt_time, :submission_time,
+        :status, :score, :dataset, :clue, :reply, :reply_clear, :hint
+    )
+    ON CONFLICT(submission_id) DO UPDATE SET
+        step_id=excluded.step_id, user_id=excluded.user_id,
+        attempt_time=excluded.attempt_time, submission_time=excluded.submission_time,
+        status=excluded.status, score=excluded.score, dataset=excluded.dataset,
+        clue=excluded.clue, reply=excluded.reply, reply_clear=excluded.reply_clear, hint=excluded.hint
+""")
+
+def import_submissions(csv_filepath):
+    if not os.path.exists(csv_filepath):
+        print(f"❌ Файл не найден: {csv_filepath}")
+        return
+
+    print(f" Импорт попыток: {csv_filepath}")
+    added = 0
+    total = 0
+
+    # 🔹 3. Временные оптимизации SQLite
+    db.session.execute(text("PRAGMA journal_mode=WAL"))
+    db.session.execute(text("PRAGMA synchronous=OFF"))
+    db.session.execute(text("PRAGMA cache_size=-64000"))  # 64 МБ кэш
+    db.session.execute(text("PRAGMA temp_store=MEMORY"))
+
+    try:
+        with open(csv_filepath, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            batch = []
+
+            for row in reader:
+                total += 1
+                sid = row.get("submission_id")
+                step_id = row.get("step_id")
+                uid = row.get("user_id")
+
+                # Пропускаем строки без ключевых ID
+                if not (sid and step_id and uid):
+                    continue
+
+                # 🔹 Минимум вызовов функций, безопасный парсинг
+                batch.append({
+                    "submission_id": int(sid),
+                    "step_id": int(step_id),
+                    "user_id": int(uid),
+                    "attempt_time": to_dt(row.get("attempt_time")),
+                    "submission_time": to_dt(row.get("submission_time")),
+                    "status": row.get("status") or "pending",
+                    # ✅ Исправлен баг с доступом к score
+                    "score": float(row["score"]) if row.get("score") not in (None, "") else None,
+                    "dataset": row.get("dataset"),
+                    "clue": row.get("clue"),
+                    "reply": row.get("reply"),
+                    "reply_clear": str(row.get("reply_clear", "0")).lower() in ("1", "true", "yes", "t", "y"),
+                    "hint": row.get("hint")
+                })
+
+                # 🔹 4. Пакетная вставка через executemany (raw SQL)
+                if len(batch) >= BATCH_SIZE:
+                    result = db.session.execute(UPSERT_QUERY, batch)
+                    added += result.rowcount
+                    batch.clear()
+
+            # Финальный батч
+            if batch:
+                result = db.session.execute(UPSERT_QUERY, batch)
+                added += result.rowcount
+
+        db.session.commit()
+        print(f"✅ Готово. Обработано: {total}, обновлено/добавлено: {added}")
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Ошибка импорта: {e}")
+        raise
+    finally:
+        # 🔹 Всегда возвращаем безопасные настройки SQLite
+        db.session.execute(text("PRAGMA synchronous=FULL"))
+        db.session.execute(text("PRAGMA temp_store=DEFAULT"))
+        db.session.commit()
+
+    return {"submissions_added": added, "skipped": total - added}
+
+INSERT_COMMENT_SQL = text("""
+    INSERT OR IGNORE INTO comment (
+        comment_id, user_id, step_id, parent_comment_id, time_utc, deleted, text
+    )
+    VALUES (
+        :comment_id, :user_id, :step_id, :parent_comment_id, :time_utc, :deleted, :text
+    )
+""")
 
 # 4. Импорт комментариев
 def import_comments(csv_filepath):
@@ -343,38 +442,73 @@ def import_comments(csv_filepath):
         return
 
     print(f"💬 [4/4] Импорт комментариев: {csv_filepath}")
-    comments, added = [], 0
+    added = 0
     total = 0
-    with open(csv_filepath, "r", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            total += 1
-            cid, uid, sid = row.get("comment_id"), row.get("user_id"), row.get("step_id")
-            if not cid or not uid or not sid: continue
 
-            pid_raw = row.get("parent_comment_id", "0")
-            parent_id = None if not pid_raw or str(pid_raw).strip() == "0" else int(pid_raw)
+    # 🔹 Временные оптимизации SQLite
+    db.session.execute(text("PRAGMA journal_mode=WAL"))
+    db.session.execute(text("PRAGMA synchronous=OFF"))
+    db.session.execute(text("PRAGMA cache_size=-64000"))  # 64 МБ кэш
+    db.session.execute(text("PRAGMA temp_store=MEMORY"))
 
-            del_raw = row.get("deleted", "0")
-            comments.append({
-                "comment_id": int(cid),
-                "user_id": int(uid),
-                "step_id": int(sid),
-                "parent_comment_id": parent_id,
-                "time_utc": _parse_datetime(row.get("time_utc")),
-                "deleted": str(del_raw).lower() in ("1", "true", "yes", "t", "y"),
-                "text": row.get("text", "")
-            })
+    csv.field_size_limit(10**8)
 
-            if len(comments) >= BATCH_SIZE:
-                added += _bulk_insert_or_ignore(Comment, comments)
-                db.session.commit()
-                comments.clear()
+    try:
+        with open(csv_filepath, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            batch = []
 
-    if comments: added += _bulk_insert_or_ignore(Comment, comments)
-    db.session.commit()
-    print(f"   ✅ Комментариев добавлено: {added}")
+            for row in reader:
+                total += 1
+                cid = row.get("comment_id")
+                uid = row.get("user_id")
+                sid = row.get("step_id")
+
+                # Пропускаем строки без ключевых ID
+                if not (cid and uid and sid):
+                    continue
+
+                pid_raw = row.get("parent_comment_id", "0")
+                parent_id = None if not pid_raw or str(pid_raw).strip() == "0" else int(pid_raw)
+
+                del_raw = row.get("deleted", "0")
+
+                batch.append({
+                    "comment_id": int(cid),
+                    "user_id": int(uid),
+                    "step_id": int(sid),
+                    "parent_comment_id": parent_id,
+                    "time_utc": to_dt(row.get("time_utc")),
+                    "deleted": str(del_raw).lower() in ("1", "true", "yes", "t", "y"),
+                    "text": row.get("text", "")
+                    #"text": ""
+                })
+
+                # 🔹 Пакетная вставка через raw SQL
+                if len(batch) >= BATCH_SIZE:
+                    result = db.session.execute(INSERT_COMMENT_SQL, batch)
+                    added += result.rowcount
+                    batch.clear()
+
+            # Финальный батч
+            if batch:
+                result = db.session.execute(INSERT_COMMENT_SQL, batch)
+                added += result.rowcount
+
+        db.session.commit()
+        print(f"   ✅ Комментариев добавлено: {added}")
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Ошибка импорта комментариев: {e}")
+        raise
+    finally:
+        # 🔹 Всегда возвращаем безопасные настройки SQLite
+        db.session.execute(text("PRAGMA synchronous=FULL"))
+        db.session.execute(text("PRAGMA temp_store=DEFAULT"))
+        db.session.commit()
+
     return {"comments_added": added, "skipped": total - added}
-
 
 if __name__ == "__main__":
     with app.app_context():
