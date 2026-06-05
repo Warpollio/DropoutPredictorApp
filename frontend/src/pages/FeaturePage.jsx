@@ -2,13 +2,15 @@ import { useState, useEffect } from 'react';
 import {
   Paper, Typography, Box, Card, CardContent,
   Divider, Chip, Alert, Button, TextField,
-  FormControl, Select, MenuItem
+  FormControl, Select, MenuItem, LinearProgress
 } from '@mui/material';
 import { AutoFixHigh, DataObject, Person, WarningAmber, School } from '@mui/icons-material';
 import axios from 'axios';
 
 import UserComparisonTable from '../components/features/UserComparisonTable';
 import CoursePicker from '../components/common/CoursePicker';
+
+import useFeatureComputation from '../hooks/useFeatureComputation';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -39,13 +41,24 @@ export default function FeaturePage() {
   const [userId, setUserId] = useState('');
   const [cutoffDate, setCutoffDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
+  //const [result, setResult] = useState(null);
+  //const [error, setError] = useState(null);
 
   // === Состояние для выбора курса ===
   const [courses, setCourses] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [selectedCourse, setSelectedCourse] = useState(null);
+
+    const {
+      start: startCompute,
+      reset: resetCompute,
+      status,
+      progress,
+      message,
+      result,
+      error,
+      isComputing
+    } = useFeatureComputation();
 
   // 🔹 Загрузка списка курсов при монтировании
   useEffect(() => {
@@ -67,35 +80,21 @@ export default function FeaturePage() {
     fetchCourses();
   }, [selectedCourse]);
 
-  // 🔹 Вычисление фич
-  const handleCompute = async () => {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-
+  // 🔹 Обработчик кнопки "Вычислить"
+  const handleCompute = () => {
     const cutoff = cutoffDate ? `${cutoffDate}T23:59:59` : new Date().toISOString();
     const body = {
       cutoff_date: cutoff,
       user_id: userId ? parseInt(userId, 10) : undefined,
-      // Опционально: фильтрация по выбранному курсу (если бэкенд поддерживает)
       ...(selectedCourse && { course_id: selectedCourse })
     };
-
-    try {
-      const res = await fetch(`${API_URL}/api/features/compute`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
-      setResult(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    startCompute(body);
   };
+
+  // 🔹 Сброс при смене курса
+  useEffect(() => {
+    resetCompute();
+  }, [selectedCourse]);
 
   // 🔹 Смена курса через компактный селект
   const handleCourseChange = (event) => {
@@ -214,10 +213,43 @@ export default function FeaturePage() {
         </Box>
       </Box>
 
-      {/* Ошибки и результаты */}
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {/* 🔹 Прогресс-бар (показывается во время вычисления) */}
+      {isComputing && (
+        <Box sx={{ mb: 3 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+            <Typography variant="caption" color="#9CA3AF">
+              {status === 'pending' ? 'Запуск...' : 'Обработка'}
+            </Typography>
+            <Typography variant="caption" color="#9CA3AF">
+              {Math.round(progress * 100)}%
+            </Typography>
+          </Box>
+          <LinearProgress 
+            variant="determinate" 
+            value={progress * 100} 
+            sx={{ 
+              height: 8, 
+              borderRadius: 4,
+              '& .MuiLinearProgress-bar': { bgcolor: '#3B82F6' }
+            }} 
+          />
+          {message && (
+            <Typography variant="caption" color="#9CA3AF" sx={{ mt: 0.5, display: 'block' }}>
+              {message}
+            </Typography>
+          )}
+        </Box>
+      )}
+
+      {/* ❌ Ошибка */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => resetCompute()}>
+          {error}
+        </Alert>
+      )}
       
-      {result && (
+      {/* ✅ Результат */}
+      {result && !isComputing && (
         <Box sx={{ 
           p: 2, 
           bgcolor: 'rgba(34, 197, 94, 0.1)', 
@@ -249,10 +281,7 @@ export default function FeaturePage() {
       )}
 
       <Divider sx={{ my: 3, borderColor: '#4B5563' }} />
-
-      {/* Таблица сравнения пользователей */}
       <UserComparisonTable courseId={selectedCourse} />
-
     </Paper>
   );
 }

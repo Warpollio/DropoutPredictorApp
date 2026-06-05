@@ -39,7 +39,7 @@ def api_import():
         with app.app_context():
             if import_type == 'structure':
                 result = import_structure(temp_path)
-                sync_step_stats()
+                #sync_step_stats()
             elif import_type == 'learners':
                 result = import_learners(temp_path)
             elif import_type == 'submissions':

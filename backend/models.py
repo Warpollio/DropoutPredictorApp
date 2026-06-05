@@ -2,13 +2,26 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Index, Integer, Text, func
+    Boolean, DateTime, Float, ForeignKey, Index, Integer, Text, func, String, JSON, Text
 )
+
 from sqlalchemy.orm import (
     Mapped, mapped_column, relationship
 )
 
 from config import db
+
+class ComputeTask(db.Model):
+    __tablename__ = 'compute_tasks'
+    
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String(20), default='pending')
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    message: Mapped[str] = mapped_column(String(255), default='')
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
 
 class Course(db.Model):
     __tablename__ = 'course'

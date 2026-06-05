@@ -1,46 +1,69 @@
+import threading
+import time
 from flask import Blueprint, request, jsonify
-from sqlalchemy import select, func, insert
+from sqlalchemy import select, func
 from datetime import datetime
 from collections import defaultdict
 import statistics
 
-from config import db
-from models import Submission, UserStepFeature, UserDropoutFeature, Learner
-
+from config import db, app
+from models import Submission, UserStepFeature, UserDropoutFeature, Learner, ComputeTask, CourseFeature
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
 
 features_bp = Blueprint('features', __name__, url_prefix='/api/features')
 
+# ─────────────────────────────────────────────────────────────
+# 🔧 Вспомогательные функции
+# ─────────────────────────────────────────────────────────────
 
-def _bulk_upsert(model, data_list, chunk_size=50):
+def _bulk_upsert(model, data_list, chunk_size=50, max_retries=5):  # ← уменьшили с 500 до 50
+    """Пакетный UPSERT с повторными попытками при блокировке БД"""
     if not data_list:
         return 0
     
     pk_cols = [col.name for col in model.__table__.primary_key.columns]
-    total_upserted = 0
+    total = 0
     
-    # Разбиваем данные на пакеты
     for i in range(0, len(data_list), chunk_size):
         chunk = data_list[i:i + chunk_size]
         
-        stmt = sqlite_insert(model).values(chunk)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=pk_cols,
-            set_={
-                col.name: stmt.excluded[col.name] 
-                for col in model.__table__.columns 
-                if col.name not in pk_cols
-            }
-        )
-        db.session.execute(stmt)
-        total_upserted += len(chunk)
+        # 🔹 Retry-логика для каждого чанка
+        for attempt in range(max_retries):
+            try:
+                stmt = sqlite_insert(model).values(chunk)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=pk_cols,
+                    set_={
+                        col.name: stmt.excluded[col.name] 
+                        for col in model.__table__.columns 
+                        if col.name not in pk_cols
+                    }
+                )
+                db.session.execute(stmt)
+                total += len(chunk)
+                break  # Успех → выходим из цикла попыток
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Если блокировка БД и есть попытки — ждём и пробуем снова
+                if ("database is locked" in error_msg or "locked" in error_msg) and attempt < max_retries - 1:
+                    db.session.rollback()
+                    # Экспоненциальная задержка: 0.05с → 0.1с → 0.2с → 0.4с → 0.8с
+                    time.sleep(0.05 * (2 ** attempt))
+                    continue
+                else:
+                    # Если не удалось или ошибка другая — пробрасываем дальше
+                    raise
         
-    return total_upserted
+        # 🔹 Небольшая пауза между чанками, чтобы уступить поток другим запросам
+        time.sleep(0.01)
+        
+    return total
 
 
-# метрики для списка попыток одного шага
 def _compute_step_metrics(sub_list):
-
+    """Вычисляет метрики для одного шага пользователя"""
     total = len(sub_list)
     if total == 0:
         return None
@@ -61,99 +84,273 @@ def _compute_step_metrics(sub_list):
         'errors_before_success': first_correct_idx,
         'has_post_success_attempts': (first_correct_idx is not None and total > first_correct_idx + 1),
         'attempt_sequence': ','.join(seq),
-        'calculated_at': datetime.utcnow()
+        #'calculated_at': datetime.utcnow()
     }
 
-#patams: cutoff_date, user_id
-@features_bp.route('/compute', methods=['POST'])
-def compute_features():
 
-    data = request.get_json(silent=True) or {}
-    cutoff_str = data.get('cutoff_date')
-    user_id_filter = data.get('user_id')
+def _process_user_metrics(cf_id, user_id, user_submissions, cutoff):
+    step_metrics = []
+    for (uid, sid), sub_list in user_submissions.items():
+        metrics = _compute_step_metrics(sub_list)
+        if metrics:
+            # ✅ Обязательно добавляем cf_id
+            metrics['cf_id'] = cf_id
+            step_metrics.append(metrics)
 
-    cutoff = datetime.utcnow()
-    if cutoff_str:
+    if step_metrics:
+        _bulk_upsert(UserStepFeature, step_metrics, chunk_size=500)
+
+    n = len(step_metrics)
+    if n == 0:
+        return
+
+    first_try_cnt = sum(1 for m in step_metrics if m.get('first_try_correct'))
+    attempts = [m['total_attempts'] for m in step_metrics]
+    errors = [m['errors_before_success'] for m in step_metrics if m.get('errors_before_success') is not None]
+    post_success_cnt = sum(1 for m in step_metrics if m.get('has_post_success_attempts'))
+
+    user_feats = [{
+        'cf_id': cf_id,  # ✅ PK часть 1
+        'user_id': user_id,  # ✅ PK часть 2
+        'first_try_success_rate': first_try_cnt / n,
+        'avg_attempts_per_step': sum(attempts) / len(attempts),
+        'std_attempts_per_step': statistics.stdev(attempts) if len(attempts) > 1 else 0.0,
+        'pct_steps_with_post_success': post_success_cnt / n,
+        'avg_errors_before_success': sum(errors) / len(errors) if errors else 0.0,
+        'steps_completed': n,
+        'prediction_cutoff_utc': cutoff
+    }]
+
+    if user_feats:
+        _bulk_upsert(UserDropoutFeature, user_feats)
+# ─────────────────────────────────────────────────────────────
+# 🔄 Фоновая задача (не блокирует HTTP)
+# ─────────────────────────────────────────────────────────────
+
+import time
+import math
+from sqlalchemy import text
+
+def run_compute_task(task_id, params):
+    with app.app_context():
+        task = db.session.get(ComputeTask, task_id)
         try:
-            cutoff = datetime.fromisoformat(cutoff_str.replace('Z', '+00:00'))
-        except ValueError:
-            return jsonify({'error': 'Неверный формат cutoff_date.'}), 400
+            task.status = 'running'
+            task.message = 'Инициализация сессии...'
+            db.session.commit()
 
-    try:
+            cutoff = datetime.utcnow()
+            if params.get('cutoff_date'):
+                cutoff = datetime.fromisoformat(params['cutoff_date'].replace('Z', '+00:00'))
 
-        q = select(Submission).where(Submission.submission_time <= cutoff)
-        if user_id_filter:
-            q = q.where(Submission.user_id == user_id_filter)
-        q = q.order_by(Submission.user_id, Submission.step_id, Submission.submission_time)
+            course_id = params.get('course_id')
+            if not course_id:
+                raise ValueError("course_id обязателен")
+
+            # 1. Создаём сессию вычисления
+            session_record = CourseFeature(
+                course_id=course_id, feature_version='v1.0',
+                prediction_cutoff_utc=cutoff, description='SQL Window Functions (v2)'
+            )
+            db.session.add(session_record)
+            db.session.flush()
+            cf_id = session_record.cf_id
+
+            # 2. Оценка объёма
+            total_users = db.session.execute(
+                select(func.count(func.distinct(Submission.user_id))).where(Submission.submission_time <= cutoff)
+            ).scalar() or 1
+
+            task.message = f'Найдено {total_users} пользователей. Запуск SQL-агрегации...'
+            task.progress = 0.1
+            db.session.commit()
+
+            # 3. 🔥 АГРЕГАЦИЯ ШАГ-УРОВНЯ (исправлено для старых версий SQLite)
+            step_agg_sql = text("""
+                INSERT INTO user_step_feature
+                (cf_id, user_id, step_id, total_attempts, first_try_correct,
+                errors_before_success, has_post_success_attempts, attempt_sequence)
+                WITH Ranked AS (
+                    SELECT
+                        user_id, step_id, status, score,
+                        ROW_NUMBER() OVER(PARTITION BY user_id, step_id ORDER BY submission_time) as rn,
+                        CASE WHEN status = 'correct' OR score >= 0.9 THEN 1 ELSE 0 END as is_correct
+                    FROM submission
+                    WHERE submission_time <= :cutoff
+                ),
+                StepAgg AS (
+                    SELECT
+                        user_id, step_id,
+                        COUNT(*) as total_attempts,
+                        MAX(CASE WHEN rn = 1 AND is_correct = 1 THEN 1 ELSE 0 END) as first_try_correct,
+                        MIN(CASE WHEN is_correct = 1 THEN rn END) as first_correct_rn,
+                        -- ✅ Убрали ORDER BY из GROUP_CONCAT для совместимости
+                        GROUP_CONCAT(CASE WHEN is_correct = 1 THEN 'C' ELSE 'W' END) as attempt_sequence
+                    FROM Ranked
+                    GROUP BY user_id, step_id
+                )
+                SELECT
+                    :cf_id, user_id, step_id, total_attempts, first_try_correct,
+                    CASE WHEN first_correct_rn IS NOT NULL THEN first_correct_rn - 1 ELSE NULL END,
+                    CASE WHEN first_correct_rn IS NOT NULL AND total_attempts > first_correct_rn THEN 1 ELSE 0 END,
+                    attempt_sequence
+                FROM StepAgg
+            """)
+
+            db.session.execute(step_agg_sql, {"cutoff": cutoff, "cf_id": cf_id})
+            db.session.commit()
+
+            task.message = 'Агрегация шагов завершена. Вычисление пользовательских метрик...'
+            task.progress = 0.7
+            db.session.commit()
+
+            # 4. АГРЕГАЦИЯ ПОЛЬЗОВАТЕЛЬ-УРОВНЯ (быстрый SELECT по уже посчитанным шагам)
+            user_agg_sql = text("""
+                SELECT
+                    user_id,
+                    COUNT(*) as steps_completed,
+                    AVG(total_attempts) as avg_attempts,
+                    AVG(total_attempts * total_attempts) as avg_sq_attempts,
+                    SUM(CASE WHEN first_try_correct = 1 THEN 1 ELSE 0 END) as first_try_cnt,
+                    SUM(CASE WHEN has_post_success_attempts = 1 THEN 1 ELSE 0 END) as post_success_cnt,
+                    AVG(errors_before_success) as avg_errors
+                FROM user_step_feature
+                WHERE cf_id = :cf_id
+                GROUP BY user_id
+            """)
+
+            user_rows = db.session.execute(user_agg_sql, {"cf_id": cf_id}).fetchall()
+
+            user_feats = []
+            for row in user_rows:
+                n = row.steps_completed
+                if n == 0: continue
+
+                avg_att = row.avg_attempts or 0.0
+                # Стандартное отклонение = sqrt(среднее_квадратов - квадрат_среднего)
+                variance = (row.avg_sq_attempts or 0.0) - (avg_att * avg_att)
+                stddev = math.sqrt(max(0, variance))
+
+                user_feats.append({
+                    'cf_id': cf_id,
+                    'user_id': row.user_id,
+                    'first_try_success_rate': (row.first_try_cnt or 0) / n,
+                    'avg_attempts_per_step': avg_att,
+                    'std_attempts_per_step': stddev,
+                    'pct_steps_with_post_success': (row.post_success_cnt or 0) / n,
+                    'avg_errors_before_success': row.avg_errors or 0.0,
+                    'steps_completed': n,
+                    'prediction_cutoff_utc': cutoff
+                })
+
+            # 5. Вставка пользовательских фич (быстрый пакетный INSERT)
+            if user_feats:
+                for i in range(0, len(user_feats), 1000):
+                    chunk = user_feats[i:i+1000]
+                    db.session.execute(sqlite_insert(UserDropoutFeature).values(chunk))
+                db.session.commit()
+
+            task.status = 'completed'
+            task.progress = 1.0
+            task.message = 'Готово'
+            task.result = {'cf_id': cf_id, 'processed_users': len(user_feats)}
+            db.session.commit()
+
+        except Exception as e:
+            db.session.rollback()
+            task.status = 'failed'
+            task.error = str(e)
+            db.session.commit()
+
+
+def _safe_update_progress(task, progress, message, max_retries=3):
+    """
+    Пытается обновить прогресс задачи, игнорируя временные блокировки БД.
+    Прогресс — это UX, а не критичные данные, поэтому ошибки не ломают процесс.
+    """
+    for attempt in range(max_retries):
+        try:
+            task.progress = progress
+            task.message = message
+            db.session.commit()
+            return True
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Если это блокировка БД и есть попытки — ждём и пробуем снова
+            if ("database is locked" in error_msg or "locked" in error_msg) and attempt < max_retries - 1:
+                db.session.rollback()
+                time.sleep(0.1 * (attempt + 1))  # Экспоненциальная задержка: 0.1с, 0.2с, 0.3с
+                continue
+            else:
+                # Если не удалось или ошибка другая — логируем, но не останавливаем процесс
+                app.logger.warning(f"⚠️ Не удалось обновить прогресс задачи {task.id}: {e}")
+                db.session.rollback()
+                return False
+    return False
+
+# ─────────────────────────────────────────────────────────────
+# 🌐 Эндпоинты
+# ─────────────────────────────────────────────────────────────
+
+@features_bp.route('/compute', methods=['POST'])
+def start_compute():
+    data = request.get_json(silent=True) or {}
+    
+    task = ComputeTask(status='pending', message='Ожидание запуска...')
+    db.session.add(task)
+    db.session.flush()        # ⚡ Генерирует task.id, но не фиксирует транзакцию
+    task_id = task.id         # ⚡ Сохраняем ID до коммита
+    db.session.commit()       # Фиксируем в БД
+
+    # ✅ Передаём уже сохранённый task_id, а не обращаемся к expired-объекту
+    thread = threading.Thread(target=run_compute_task, args=(task_id, data), daemon=True)
+    thread.start()
+
+    return jsonify({'task_id': task_id, 'status': 'pending'}), 202
+
+
+@features_bp.route('/compute/<int:task_id>/status', methods=['GET'])
+def get_task_status(task_id):
+    """Возвращает статус и прогресс задачи (свежие данные из БД)"""
+    
+    # 🔹 Вариант 1: Использовать select() вместо get() — всегда свежий запрос
+    task = db.session.execute(
+        select(ComputeTask).where(ComputeTask.id == task_id)
+    ).scalar_one_or_none()
+    
+    # 🔹 Вариант 2 (альтернатива): Если используете get(), добавьте refresh()
+    # task = db.session.get(ComputeTask, task_id)
+    # if task:
+    #     db.session.refresh(task)  # ← Принудительно обновить из БД
+    
+    if not task:
+        return jsonify({'error': 'Задача не найдена'}), 404
         
-        subs = db.session.execute(q).scalars().all()
-
-
-        grouped = defaultdict(list)
-        for s in subs:
-            grouped[(s.user_id, s.step_id)].append(s)
-
-        step_metrics = []
-        user_metrics_map = defaultdict(list)
-
-        for key, sub_list in grouped.items():
-            metrics = _compute_step_metrics(sub_list)
-            if metrics:
-                step_metrics.append(metrics)
-                user_metrics_map[metrics['user_id']].append(metrics)
-
-        # Сохранение
-        if step_metrics:
-            _bulk_upsert(UserStepFeature, step_metrics)
-
-        # Агрегация
-        user_updates = []
-        for uid, feats in user_metrics_map.items():
-            n = len(feats) # количество попыток
-            first_try_cnt = sum(1 for f in feats if f.get('first_try_correct')) # количество успешных первых попыток
-            attempts = [f['total_attempts'] for f in feats] # Список всех total_attempts по шагам
-            errors = [f['errors_before_success'] for f in feats if f.get('errors_before_success') is not None]
-            post_success_cnt = sum(1 for f in feats if f.get('has_post_success_attempts'))
-
-            user_updates.append({
-                'user_id': uid,
-                'first_try_success_rate': first_try_cnt / n if n else 0.0,
-                'avg_attempts_per_step': sum(attempts) / len(attempts) if attempts else 0.0,
-                'std_attempts_per_step': statistics.stdev(attempts) if len(attempts) > 1 else 0.0, # стандартное отклонение
-                'pct_steps_with_post_success': post_success_cnt / n if n else 0.0, # % шагов с попытками после успеха
-                'avg_errors_before_success': sum(errors) / len(errors) if errors else 0.0, # среднее кол-во ошибок до успеха
-                'steps_completed': n,
-                'calculated_at': datetime.utcnow(),     
-                'prediction_cutoff_utc': cutoff      
-            })
-
-
-        if user_updates:
-            _bulk_upsert(UserDropoutFeature, user_updates)
-
-        db.session.commit()
-
-        return jsonify({
-            'status': 'success',
-            'processed_users': len(user_metrics_map),
-            'processed_steps': len(step_metrics),
-            'cutoff_date': cutoff.isoformat()
-        }), 200
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': f'Ошибка вычисления: {str(e)}'}), 500
-
+    return jsonify({
+        'id': task.id,
+        'status': task.status,
+        'progress': task.progress,
+        'message': task.message,
+        'result': task.result,
+        'error': task.error
+    })
 
 @features_bp.route('/<int:user_id>', methods=['GET'])
 def get_user_features(user_id):
-    """Возвращает готовые агрегированные метрики пользователя"""
-    feat = db.session.get(UserDropoutFeature, user_id)
+    # ✅ Ищем самую свежую сессию для пользователя
+    feat = db.session.execute(
+        select(UserDropoutFeature)
+        .where(UserDropoutFeature.user_id == user_id)
+        .order_by(UserDropoutFeature.cf_id.desc())  # или calculated_at, если есть
+        .limit(1)
+    ).scalar_one_or_none()
+
     if not feat:
         return jsonify({'error': 'Фичи не найдены. Сначала вызовите POST /compute.'}), 404
 
     return jsonify({
         'user_id': feat.user_id,
+        'cf_id': feat.cf_id,
         'metrics': {
             'first_try_success_rate': feat.first_try_success_rate,
             'avg_attempts_per_step': feat.avg_attempts_per_step,
@@ -163,14 +360,13 @@ def get_user_features(user_id):
             'steps_completed': feat.steps_completed
         },
         'metadata': {
-            'calculated_at': feat.calculated_at.isoformat() if feat.calculated_at else None,
             'cutoff_date': feat.prediction_cutoff_utc.isoformat() if feat.prediction_cutoff_utc else None
         }
     }), 200
 
+
 @features_bp.route('/list', methods=['GET'])
 def list_user_features():
-    """Возвращает список пользователей с метриками и ФИО. Поддерживает пагинацию и сортировку."""
     try:
         page = request.args.get('page', 1, type=int)
         per_page = min(request.args.get('per_page', 25, type=int), 100)
@@ -183,13 +379,13 @@ def list_user_features():
         if sort_by not in allowed:
             sort_by = 'calculated_at'
 
-        col = getattr(UserDropoutFeature, sort_by)
+        # ✅ Берём calculated_at из CourseFeature через JOIN
+        col = getattr(CourseFeature, sort_by) if sort_by == 'calculated_at' else getattr(UserDropoutFeature, sort_by)
         if order.lower() == 'desc':
             col = col.desc()
 
         offset = (page - 1) * per_page
 
-        # JOIN с Learner для получения фамилии и имени
         query = select(
             UserDropoutFeature.user_id,
             Learner.last_name,
@@ -200,8 +396,9 @@ def list_user_features():
             UserDropoutFeature.pct_steps_with_post_success,
             UserDropoutFeature.avg_errors_before_success,
             UserDropoutFeature.steps_completed,
-            UserDropoutFeature.calculated_at
-        ).join(Learner, UserDropoutFeature.user_id == Learner.user_id)\
+            CourseFeature.calculated_at.label('calculated_at')  # ← JOIN с сессией
+        ).join(CourseFeature, UserDropoutFeature.cf_id == CourseFeature.cf_id)\
+         .join(Learner, UserDropoutFeature.user_id == Learner.user_id)\
          .order_by(col).offset(offset).limit(per_page)
 
         results = db.session.execute(query).all()
@@ -222,11 +419,6 @@ def list_user_features():
                 'calculated_at': row.calculated_at.isoformat() if row.calculated_at else None
             })
 
-        return jsonify({
-            'data': data,
-            'total': total,
-            'page': page,
-            'per_page': per_page
-        }), 200
+        return jsonify({'data': data, 'total': total, 'page': page, 'per_page': per_page}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
