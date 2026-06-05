@@ -10,6 +10,8 @@ import MetricToggle from './MetricToggle';
 import StepChart from './StepChart';
 import EnrollmentChart from './EnrollmentChart';
 
+import CoursePicker from '../common/CoursePicker';
+
 const API_URL = 'http://localhost:5000';
 
 export default function CourseDashboard({ courseId = null, sx = {} }) {
@@ -143,42 +145,17 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
     return <Container maxWidth="xl" sx={{ py: 8 }}><Alert severity="warning">Курсы не найдены</Alert></Container>;
   }
 
-  // НЕТ courseId в URL показываем пикер
+  // НЕТ courseId в URL → показываем пикер
   if (!courseId) {
     return (
-      <Container maxWidth="md" sx={{ py: 8 }}>
-        <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
-          <Typography variant="h5" fontWeight={600} gutterBottom>
-            📊 Выберите курс
-          </Typography>
-          <Typography color="text.secondary" sx={{ mb: 3 }}>
-            Доступно курсов: {courses.length}
-          </Typography>
-          
-          <FormControl fullWidth>
-            <Select
-              value=""
-              onChange={handleCourseChange}
-              displayEmpty
-              size="large"
-              sx={{ fontSize: '1rem' }}
-            >
-              <MenuItem disabled value=""><em>Выберите курс...</em></MenuItem>
-              {courses.map(c => (
-                <MenuItem key={c.id} value={c.id} sx={{ py: 1.5 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                    <Typography fontWeight={500}>{c.name}</Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Chip label={`${c.modules} мод.`} size="small" variant="outlined" />
-                      <Chip label={`${c.steps} шагов`} size="small" variant="outlined" />
-                    </Box>
-                  </Box>
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Paper>
-      </Container>
+      <CoursePicker
+        courses={courses}
+        loading={coursesLoading}
+        error={error}
+        useNavigation={true} // ← используем navigate для смены URL
+        title="📊 Выберите курс для анализа"
+        placeholder="Выберите курс..."
+      />
     );
   }
 

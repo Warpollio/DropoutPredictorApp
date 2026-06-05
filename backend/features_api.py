@@ -1,11 +1,11 @@
 from flask import Blueprint, request, jsonify
-from sqlalchemy import select, insert
+from sqlalchemy import select, func, insert
 from datetime import datetime
 from collections import defaultdict
 import statistics
 
 from config import db
-from models import Submission, UserStepFeature, UserDropoutFeature
+from models import Submission, UserStepFeature, UserDropoutFeature, Learner
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -167,3 +167,66 @@ def get_user_features(user_id):
             'cutoff_date': feat.prediction_cutoff_utc.isoformat() if feat.prediction_cutoff_utc else None
         }
     }), 200
+
+@features_bp.route('/list', methods=['GET'])
+def list_user_features():
+    """Возвращает список пользователей с метриками и ФИО. Поддерживает пагинацию и сортировку."""
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 25, type=int), 100)
+        sort_by = request.args.get('sort_by', 'calculated_at')
+        order = request.args.get('order', 'desc')
+
+        allowed = ['user_id', 'first_try_success_rate', 'avg_attempts_per_step',
+                   'std_attempts_per_step', 'pct_steps_with_post_success',
+                   'avg_errors_before_success', 'steps_completed', 'calculated_at']
+        if sort_by not in allowed:
+            sort_by = 'calculated_at'
+
+        col = getattr(UserDropoutFeature, sort_by)
+        if order.lower() == 'desc':
+            col = col.desc()
+
+        offset = (page - 1) * per_page
+
+        # JOIN с Learner для получения фамилии и имени
+        query = select(
+            UserDropoutFeature.user_id,
+            Learner.last_name,
+            Learner.first_name,
+            UserDropoutFeature.first_try_success_rate,
+            UserDropoutFeature.avg_attempts_per_step,
+            UserDropoutFeature.std_attempts_per_step,
+            UserDropoutFeature.pct_steps_with_post_success,
+            UserDropoutFeature.avg_errors_before_success,
+            UserDropoutFeature.steps_completed,
+            UserDropoutFeature.calculated_at
+        ).join(Learner, UserDropoutFeature.user_id == Learner.user_id)\
+         .order_by(col).offset(offset).limit(per_page)
+
+        results = db.session.execute(query).all()
+        total = db.session.execute(select(func.count(UserDropoutFeature.user_id))).scalar()
+
+        data = []
+        for row in results:
+            data.append({
+                'user_id': row.user_id,
+                'last_name': row.last_name,
+                'first_name': row.first_name,
+                'first_try_success_rate': row.first_try_success_rate,
+                'avg_attempts_per_step': row.avg_attempts_per_step,
+                'std_attempts_per_step': row.std_attempts_per_step,
+                'pct_steps_with_post_success': row.pct_steps_with_post_success,
+                'avg_errors_before_success': row.avg_errors_before_success,
+                'steps_completed': row.steps_completed,
+                'calculated_at': row.calculated_at.isoformat() if row.calculated_at else None
+            })
+
+        return jsonify({
+            'data': data,
+            'total': total,
+            'page': page,
+            'per_page': per_page
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
