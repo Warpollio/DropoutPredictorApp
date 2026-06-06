@@ -64,7 +64,7 @@ export default function FeaturePage() {
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const res = await axios.get(`${API_URL}/api/courses/stats`, { timeout: 10000 });
+        const res = await axios.get(`${API_URL}/api/courses/list`, { timeout: 10000 });
         setCourses(res.data.courses || []);
         // Автовыбор первого курса, если список не пуст и курс ещё не выбран
         if (res.data.courses?.length > 0 && !selectedCourse) {

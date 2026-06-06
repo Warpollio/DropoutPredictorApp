@@ -373,19 +373,42 @@ def list_user_features():
         sort_by = request.args.get('sort_by', 'calculated_at')
         order = request.args.get('order', 'desc')
 
+        # 🔍 Параметры фильтрации сессии
+        cf_id_param = request.args.get('cf_id', type=int)
+        course_id_param = request.args.get('course_id', type=int)
+
+        # 1️⃣ Определяем целевую cf_id по приоритету
+        target_cf_id = cf_id_param
+        if target_cf_id is None:
+            if course_id_param is not None:
+                # Последняя сессия для выбранного курса
+                target_cf_id = db.session.execute(
+                    select(func.max(CourseFeature.cf_id)).where(CourseFeature.course_id == course_id_param)
+                ).scalar()
+            else:
+                # Самая последняя сессия вообще (любой курс)
+                target_cf_id = db.session.execute(
+                    select(func.max(CourseFeature.cf_id))
+                ).scalar()
+
+        # Если фичи ещё не вычислялись
+        if target_cf_id is None:
+            return jsonify({'data': [], 'total': 0, 'page': page, 'per_page': per_page}), 200
+
+        # 2️⃣ Настройка сортировки
         allowed = ['user_id', 'first_try_success_rate', 'avg_attempts_per_step',
                    'std_attempts_per_step', 'pct_steps_with_post_success',
                    'avg_errors_before_success', 'steps_completed', 'calculated_at']
         if sort_by not in allowed:
             sort_by = 'calculated_at'
 
-        # ✅ Берём calculated_at из CourseFeature через JOIN
-        col = getattr(CourseFeature, sort_by) if sort_by == 'calculated_at' else getattr(UserDropoutFeature, sort_by)
+        sort_col = CourseFeature.calculated_at if sort_by == 'calculated_at' else getattr(UserDropoutFeature, sort_by)
         if order.lower() == 'desc':
-            col = col.desc()
+            sort_col = sort_col.desc()
 
         offset = (page - 1) * per_page
 
+        # 3️⃣ Основной запрос (строго по target_cf_id)
         query = select(
             UserDropoutFeature.user_id,
             Learner.last_name,
@@ -396,14 +419,21 @@ def list_user_features():
             UserDropoutFeature.pct_steps_with_post_success,
             UserDropoutFeature.avg_errors_before_success,
             UserDropoutFeature.steps_completed,
-            CourseFeature.calculated_at.label('calculated_at')  # ← JOIN с сессией
-        ).join(CourseFeature, UserDropoutFeature.cf_id == CourseFeature.cf_id)\
+            CourseFeature.calculated_at.label('calculated_at')
+        ).where(UserDropoutFeature.cf_id == target_cf_id)\
+         .join(CourseFeature, UserDropoutFeature.cf_id == CourseFeature.cf_id)\
          .join(Learner, UserDropoutFeature.user_id == Learner.user_id)\
-         .order_by(col).offset(offset).limit(per_page)
+         .order_by(sort_col).offset(offset).limit(per_page)
 
         results = db.session.execute(query).all()
-        total = db.session.execute(select(func.count(UserDropoutFeature.user_id))).scalar()
 
+        # 4️⃣ Подсчёт общего количества (должен совпадать с WHERE выше!)
+        total = db.session.execute(
+            select(func.count(UserDropoutFeature.user_id))
+            .where(UserDropoutFeature.cf_id == target_cf_id)
+        ).scalar() or 0
+
+        # 5️⃣ Формирование ответа
         data = []
         for row in results:
             data.append({
@@ -416,9 +446,17 @@ def list_user_features():
                 'pct_steps_with_post_success': row.pct_steps_with_post_success,
                 'avg_errors_before_success': row.avg_errors_before_success,
                 'steps_completed': row.steps_completed,
-                'calculated_at': row.calculated_at.isoformat() if row.calculated_at else None
+                'calculated_at': row.calculated_at.isoformat() if row.calculated_at else None,
+                'cf_id': target_cf_id  # ← Полезно для фронтенда
             })
 
-        return jsonify({'data': data, 'total': total, 'page': page, 'per_page': per_page}), 200
+        return jsonify({
+            'data': data, 
+            'total': total, 
+            'page': page, 
+            'per_page': per_page,
+            'cf_id': target_cf_id  # ← Возвращаем, какую сессию показали
+        }), 200
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500

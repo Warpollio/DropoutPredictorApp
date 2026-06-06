@@ -20,7 +20,7 @@ export default function CourseStatsPanel({ sx = {} }) {
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const res = await axios.get(`${API_URL}/api/courses/stats`);
+        const res = await axios.get(`${API_URL}/api/courses/list`);
         setCourses(res.data.courses);
         if (res.data.courses.length > 0) {
           setSelectedCourse(res.data.courses[0].id.toString());

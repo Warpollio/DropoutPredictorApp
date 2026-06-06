@@ -69,6 +69,7 @@ def api_import():
 @app.route('/api/courses/stats', methods=['GET'])
 def get_courses_stats():
     """Возвращает список курсов с базовой статистикой"""
+    print("stats start")
     try:
 
         modules_count = select(func.count(Module.module_id)).where(
@@ -110,7 +111,7 @@ def get_courses_stats():
         learners_count = db.session.execute(
             select(func.count(Learner.user_id))
         ).scalar()
-        
+        print("stats finish")
         return jsonify({
             'total_courses': len(courses),
             'total_learners': learners_count,
@@ -119,7 +120,7 @@ def get_courses_stats():
                     'id': c.course_id,
                     'name': c.name,
                     'modules': c.modules_count or 0,
-                    'lessons': c.lessons_count or 0,   # ← Добавлено в ответ
+                    'lessons': c.lessons_count or 0,
                     'steps': c.steps_count or 0,
                     'submissions': c.submissions_count or 0
                 }
@@ -127,9 +128,30 @@ def get_courses_stats():
             ]
         }), 200
         
+        
     except Exception as e:
         app.logger.error(f"Ошибка получения статистики: {e}")
         return jsonify({'error': 'Не удалось загрузить статистику'}), 500
+    
+@app.route('/api/courses/list', methods=['GET']) 
+def get_courses_for_picker():
+    """Возвращает плоский список курсов для селектора/пикера"""
+    try:
+        # Простой SELECT без JOIN и подзапросов
+        rows = db.session.execute(
+            select(Course.course_id, Course.name).order_by(Course.name)
+        ).all()
+        
+        return jsonify({
+            'courses': [
+                {'id': row.course_id, 'name': row.name}
+                for row in rows
+            ]
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f"Ошибка получения списка курсов: {e}")
+        return jsonify({'error': 'Не удалось загрузить список курсов'}), 500
 
 
 @app.route('/api/courses/<int:course_id>/details', methods=['GET'])

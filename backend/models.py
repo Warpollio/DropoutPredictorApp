@@ -109,6 +109,7 @@ class Step(db.Model):
 
 class Learner(db.Model):
     __tablename__ = 'learner'
+    __table_args__ = (Index('idx_learner_joined', 'date_joined_utc'),) 
 
     user_id: Mapped[int] = mapped_column(primary_key=True)
     last_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -144,6 +145,9 @@ class Submission(db.Model):
     __table_args__ = (
         Index('idx_submission_step', 'step_id'),
         Index('idx_submission_user', 'user_id'),
+        # 🔹 НОВЫЕ ИНДЕКСЫ (критично для скорости!)
+        Index('idx_submission_time', 'submission_time'),
+        Index('idx_submission_time_us', 'submission_time', 'user_id', 'step_id'),
     )
 
     submission_id: Mapped[int] = mapped_column(primary_key=True)
@@ -341,55 +345,6 @@ class UserDropoutFeature(db.Model):
     feature_session: Mapped["CourseFeature"] = relationship(
         back_populates="user_dropout_features", foreign_keys=[cf_id]
     )
-    learner: Mapped["Learner"] = relationship(
-        back_populates="dropout_features", foreign_keys=[user_id]
-    )
-
-    """
-    Агрегированные фичи на уровне пользователя — готовая строка для ML-модели.
-    """
-
-    __tablename__ = 'user_dropout_feature'
-    __table_args__ = (
-        Index('idx_udf_calculated', 'calculated_at'),
-        Index('idx_udf_version', 'feature_version'),
-    )
-
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey('learner.user_id', ondelete='CASCADE'),
-        primary_key=True
-    )
-
-
-    first_try_success_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    avg_attempts_per_step: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    std_attempts_per_step: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    pct_steps_with_post_success: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    avg_errors_before_success: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-
-
-    steps_completed: Mapped[int] = mapped_column(Integer, default=0)
-    max_step_reached: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    last_activity_utc: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-
-    # === Тренды (вычисляются по времени/порядку шагов) ===
-    attempts_trend_slope: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # линейный регресс
-    is_sequence_escalating: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-
-    # === Сырые последовательности для нейросетей ===
-    global_attempt_pattern: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    # Пример: {"101": "W,W,C", "102": "C", "103": "W,W,W"}
-
-
-    calculated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.current_timestamp()
-    )
-    feature_version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    prediction_cutoff_utc: Mapped[Optional[datetime]] = mapped_column(
-        DateTime, nullable=True, comment="До этой даты использовались данные"
-    )
-
-
     learner: Mapped["Learner"] = relationship(
         back_populates="dropout_features", foreign_keys=[user_id]
     )

@@ -24,7 +24,7 @@ const METRIC_COLUMNS = [
   { id: 'first_try_success_rate', label: 'Успех с 1-й (%)', numeric: true, sortable: true, percent: true, higherIsBetter: true },
   { id: 'avg_attempts_per_step', label: 'Сред. попыток', numeric: true, sortable: true, higherIsBetter: false },
   { id: 'avg_errors_before_success', label: 'Ошибок до успеха', numeric: true, sortable: true, higherIsBetter: false },
-  { id: 'pct_steps_with_post_success', label: '"Залипания" (%)', numeric: true, sortable: true, percent: true, higherIsBetter: false },
+  { id: 'pct_steps_with_post_success', label: '"Решение после успеха" (%)', numeric: true, sortable: true, percent: true, higherIsBetter: false },
   { id: 'std_attempts_per_step', label: 'Стабильность', numeric: true, sortable: true, higherIsBetter: true }
 ];
 
@@ -32,17 +32,18 @@ const COMP_METRICS = [
   { key: 'first_try_success_rate', label: 'Успех с 1-й попытки', percent: true, higherIsBetter: true },
   { key: 'avg_attempts_per_step', label: 'Среднее число попыток', percent: false, higherIsBetter: false },
   { key: 'std_attempts_per_step', label: 'Стабильность (std)', percent: false, higherIsBetter: true },
-  { key: 'pct_steps_with_post_success', label: '% "залипаний"', percent: true, higherIsBetter: false },
+  { key: 'pct_steps_with_post_success', label: '% "решения после успеха"', percent: true, higherIsBetter: false },
   { key: 'avg_errors_before_success', label: 'Ошибок до успеха', percent: false, higherIsBetter: false },
   { key: 'steps_completed', label: 'Пройдено шагов', percent: false, higherIsBetter: true }
 ];
 
-export default function UserComparisonTable() {
+// === Обновлённые пропсы компонента ===
+export default function UserComparisonTable({ courseId = null, cfId = null }) {
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [tableError, setTableError] = useState(null);
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [totalUsers, setTotalUsers] = useState(0);
   const [sortConfig, setSortConfig] = useState({ field: 'calculated_at', direction: 'desc' });
 
@@ -50,12 +51,32 @@ export default function UserComparisonTable() {
   const [compareInput, setCompareInput] = useState('');
   const [globalError, setGlobalError] = useState(null);
 
+  // 🔹 Формируем параметры запроса
+  const buildQueryParams = () => {
+    const params = new URLSearchParams({
+      page: page + 1,
+      per_page: rowsPerPage,
+      sort_by: sortConfig.field,
+      order: sortConfig.direction,
+    });
+    
+    // Приоритет: cfId > courseId > ничего (последняя сессия)
+    if (cfId) {
+      params.append('cf_id', cfId);
+    } else if (courseId) {
+      params.append('course_id', courseId);
+    }
+    
+    return params.toString();
+  };
+
   useEffect(() => {
     const fetchUsers = async () => {
       setLoadingUsers(true);
       setTableError(null);
       try {
-        const res = await fetch(`${API_URL}/api/features/list?page=${page + 1}&per_page=${rowsPerPage}&sort_by=${sortConfig.field}&order=${sortConfig.direction}`);
+        const queryParams = buildQueryParams();
+        const res = await fetch(`${API_URL}/api/features/list?${queryParams}`);
         if (!res.ok) throw new Error('Ошибка загрузки');
         const data = await res.json();
         setUsers(data.data);
@@ -67,9 +88,9 @@ export default function UserComparisonTable() {
       }
     };
     fetchUsers();
-  }, [page, rowsPerPage, sortConfig]);
+  }, [page, rowsPerPage, sortConfig, courseId, cfId]); // 🔹 Добавили зависимости
 
-  const handleSort = (field) => {
+const handleSort = (field) => {
     const isAsc = sortConfig.field === field && sortConfig.direction === 'asc';
     setSortConfig({ field, direction: isAsc ? 'desc' : 'asc' });
   };
@@ -131,16 +152,33 @@ export default function UserComparisonTable() {
   const loadedForComp = comparedUsers.filter(u => u.metrics);
   const isComparisonReady = loadedForComp.length >= 2;
 
+  // 🔹 Текст для отображения активного фильтра
+  const filterLabel = cfId 
+    ? `Сессия #${cfId}` 
+    : courseId 
+      ? `Курс #${courseId} (последняя)` 
+      : 'Последняя сессия';
+
   return (
     <Box>
       {/* === 1. Таблица всех пользователей === */}
       <Box sx={{ mb: 4 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, flexWrap: 'wrap', gap: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Person color="primary" />
-            <Typography variant="h6">Все пользователи</Typography>
+            <Typography variant="h6">Пользователи</Typography>
             <Chip label={totalUsers} size="small" variant="outlined" sx={{ color: '#9CA3AF', borderColor: '#4B5563' }} />
+            
+            {/* 🔹 Индикатор активного фильтра */}
+            <Chip 
+              label={filterLabel} 
+              size="small" 
+              variant="filled" 
+              color="info"
+              sx={{ fontSize: '0.75rem', height: 24, ml: 1 }}
+            />
           </Box>
+          
           <Tooltip title="Обновить">
             <IconButton size="small" onClick={() => setPage(page)} disabled={loadingUsers} sx={{ color: '#9CA3AF' }}>
               <Refresh fontSize="small" />
@@ -171,27 +209,24 @@ export default function UserComparisonTable() {
               {loadingUsers ? (
                 <TableRow><TableCell colSpan={METRIC_COLUMNS.length + 2} align="center" sx={{ py: 4 }}><CircularProgress size={24} color="inherit" /></TableCell></TableRow>
               ) : users.length === 0 ? (
-                <TableRow><TableCell colSpan={METRIC_COLUMNS.length + 2} align="center" sx={{ py: 4, color: '#9CA3AF' }}>Нет данных. Сначала выполните вычисление признаков.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={METRIC_COLUMNS.length + 2} align="center" sx={{ py: 4, color: '#9CA3AF' }}>
+                  Нет данных. {cfId || courseId ? 'Попробуйте выбрать другую сессию' : 'Сначала выполните вычисление признаков.'}
+                </TableCell></TableRow>
               ) : (
                 users.map(user => {
                   const isSelected = comparedUsers.some(u => u.id === user.user_id);
                   return (
                     <TableRow key={user.user_id} hover sx={{ bgcolor: isSelected ? 'rgba(34,197,94,0.1)' : 'transparent' }}>
-                      {/* 🔹 Фамилия /n Имя /n ID */}
                       <TableCell align="left" sx={{ ...styles.cell, verticalAlign: 'top', minWidth: 160 }}>
                         <Typography variant="body2" sx={{ lineHeight: 1.3, fontWeight: 500 }}>{user.last_name || '—'}</Typography>
                         <Typography variant="body2" sx={{ lineHeight: 1.3, color: '#9CA3AF' }}>{user.first_name || '—'}</Typography>
                         <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: '#6B7280' }}>ID: {user.user_id}</Typography>
                       </TableCell>
-
-                      {/* 🔹 Метрики */}
                       {METRIC_COLUMNS.map(col => (
                         <TableCell key={col.id} align={col.numeric ? 'right' : 'left'} sx={styles.cell}>
                           {fmt(user[col.id], col.percent)}
                         </TableCell>
                       ))}
-
-                      {/* 🔹 Кнопка добавления */}
                       <TableCell align="right" sx={styles.cell}>
                         <Button size="small" variant={isSelected ? 'contained' : 'outlined'} startIcon={isSelected ? <Remove fontSize="small" /> : <Add fontSize="small" />} onClick={() => toggleCompare(user)} sx={{ color: isSelected ? '#fff' : '#22c55e', borderColor: '#22c55e', minWidth: 'auto', px: 1 }}>
                           {isSelected ? 'Убрать' : 'В сравнение'}
@@ -214,12 +249,17 @@ export default function UserComparisonTable() {
 
       <Divider sx={{ my: 3, borderColor: '#4B5563' }} />
 
-      {/* === 2. Блок сравнения === */}
+      {/* === 2. Блок сравнения (без изменений, но добавим фильтр в заголовок) === */}
       <Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
           <CompareArrows color="primary" />
           <Typography variant="h6">Сравнение ({loadedForComp.length})</Typography>
+          {(cfId || courseId) && (
+            <Chip label={filterLabel} size="small" variant="outlined" color="info" sx={{ fontSize: '0.7rem' }} />
+          )}
         </Box>
+        
+        {/* ... остальной код блока сравнения без изменений ... */}
         <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <TextField label="Добавить по ID" type="number" value={compareInput} onChange={e => setCompareInput(e.target.value)} fullWidth size="small" onKeyPress={e => e.key === 'Enter' && handleManualAdd()} />
           <Button variant="contained" startIcon={<Add />} onClick={handleManualAdd} sx={{ height: 40 }}>Добавить</Button>

@@ -49,7 +49,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const res = await axios.get(`${API_URL}/api/courses/stats`, { timeout: 100000 });
+        const res = await axios.get(`${API_URL}/api/courses/list`, { timeout: 100000 });
         setCourses(res.data.courses || []);
       } catch (err) {
         console.error('❌ Ошибка загрузки курсов:', err);
