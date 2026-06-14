@@ -145,7 +145,6 @@ class Submission(db.Model):
     __table_args__ = (
         Index('idx_submission_step', 'step_id'),
         Index('idx_submission_user', 'user_id'),
-        # 🔹 НОВЫЕ ИНДЕКСЫ (критично для скорости!)
         Index('idx_submission_time', 'submission_time'),
         Index('idx_submission_time_us', 'submission_time', 'user_id', 'step_id'),
     )

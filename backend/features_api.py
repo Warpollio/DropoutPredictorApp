@@ -13,11 +13,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 features_bp = Blueprint('features', __name__, url_prefix='/api/features')
 
-# ─────────────────────────────────────────────────────────────
-# 🔧 Вспомогательные функции
-# ─────────────────────────────────────────────────────────────
 
-def _bulk_upsert(model, data_list, chunk_size=50, max_retries=5):  # ← уменьшили с 500 до 50
+# Вспомогательные функции
+
+def _bulk_upsert(model, data_list, chunk_size=50, max_retries=5):
     """Пакетный UPSERT с повторными попытками при блокировке БД"""
     if not data_list:
         return 0
@@ -56,7 +55,7 @@ def _bulk_upsert(model, data_list, chunk_size=50, max_retries=5):  # ← уме�
                     # Если не удалось или ошибка другая — пробрасываем дальше
                     raise
         
-        # 🔹 Небольшая пауза между чанками, чтобы уступить поток другим запросам
+        # уступить поток другим запросам
         time.sleep(0.01)
         
     return total
@@ -93,7 +92,6 @@ def _process_user_metrics(cf_id, user_id, user_submissions, cutoff):
     for (uid, sid), sub_list in user_submissions.items():
         metrics = _compute_step_metrics(sub_list)
         if metrics:
-            # ✅ Обязательно добавляем cf_id
             metrics['cf_id'] = cf_id
             step_metrics.append(metrics)
 
@@ -110,8 +108,8 @@ def _process_user_metrics(cf_id, user_id, user_submissions, cutoff):
     post_success_cnt = sum(1 for m in step_metrics if m.get('has_post_success_attempts'))
 
     user_feats = [{
-        'cf_id': cf_id,  # ✅ PK часть 1
-        'user_id': user_id,  # ✅ PK часть 2
+        'cf_id': cf_id,  #PK часть 1
+        'user_id': user_id,  # PK часть 2
         'first_try_success_rate': first_try_cnt / n,
         'avg_attempts_per_step': sum(attempts) / len(attempts),
         'std_attempts_per_step': statistics.stdev(attempts) if len(attempts) > 1 else 0.0,
@@ -123,9 +121,8 @@ def _process_user_metrics(cf_id, user_id, user_submissions, cutoff):
 
     if user_feats:
         _bulk_upsert(UserDropoutFeature, user_feats)
-# ─────────────────────────────────────────────────────────────
-# 🔄 Фоновая задача (не блокирует HTTP)
-# ─────────────────────────────────────────────────────────────
+
+# Фоновая задача (не блокирует HTTP)
 
 import time
 import math
@@ -147,7 +144,7 @@ def run_compute_task(task_id, params):
             if not course_id:
                 raise ValueError("course_id обязателен")
 
-            # 1. Создаём сессию вычисления
+            # Создаём сессию вычисления
             session_record = CourseFeature(
                 course_id=course_id, feature_version='v1.0',
                 prediction_cutoff_utc=cutoff, description='SQL Window Functions (v2)'
@@ -156,7 +153,7 @@ def run_compute_task(task_id, params):
             db.session.flush()
             cf_id = session_record.cf_id
 
-            # 2. Оценка объёма
+            # Оценка объёма
             total_users = db.session.execute(
                 select(func.count(func.distinct(Submission.user_id))).where(Submission.submission_time <= cutoff)
             ).scalar() or 1
@@ -165,7 +162,6 @@ def run_compute_task(task_id, params):
             task.progress = 0.1
             db.session.commit()
 
-            # 3. 🔥 АГРЕГАЦИЯ ШАГ-УРОВНЯ (исправлено для старых версий SQLite)
             step_agg_sql = text("""
                 INSERT INTO user_step_feature
                 (cf_id, user_id, step_id, total_attempts, first_try_correct,
@@ -184,7 +180,6 @@ def run_compute_task(task_id, params):
                         COUNT(*) as total_attempts,
                         MAX(CASE WHEN rn = 1 AND is_correct = 1 THEN 1 ELSE 0 END) as first_try_correct,
                         MIN(CASE WHEN is_correct = 1 THEN rn END) as first_correct_rn,
-                        -- ✅ Убрали ORDER BY из GROUP_CONCAT для совместимости
                         GROUP_CONCAT(CASE WHEN is_correct = 1 THEN 'C' ELSE 'W' END) as attempt_sequence
                     FROM Ranked
                     GROUP BY user_id, step_id
@@ -204,7 +199,7 @@ def run_compute_task(task_id, params):
             task.progress = 0.7
             db.session.commit()
 
-            # 4. АГРЕГАЦИЯ ПОЛЬЗОВАТЕЛЬ-УРОВНЯ (быстрый SELECT по уже посчитанным шагам)
+            # АГРЕГАЦИЯ ПОЛЬЗОВАТЕЛЬ-УРОВНЯ (быстрый SELECT по уже посчитанным шагам)
             user_agg_sql = text("""
                 SELECT
                     user_id,
@@ -243,7 +238,7 @@ def run_compute_task(task_id, params):
                     'prediction_cutoff_utc': cutoff
                 })
 
-            # 5. Вставка пользовательских фич (быстрый пакетный INSERT)
+            # Вставка пользовательских фич (быстрый пакетный INSERT)
             if user_feats:
                 for i in range(0, len(user_feats), 1000):
                     chunk = user_feats[i:i+1000]
@@ -298,11 +293,11 @@ def start_compute():
     
     task = ComputeTask(status='pending', message='Ожидание запуска...')
     db.session.add(task)
-    db.session.flush()        # ⚡ Генерирует task.id, но не фиксирует транзакцию
-    task_id = task.id         # ⚡ Сохраняем ID до коммита
+    db.session.flush()        # Генерирует task.id, но не фиксирует транзакцию
+    task_id = task.id         # Сохраняем ID до коммита
     db.session.commit()       # Фиксируем в БД
 
-    # ✅ Передаём уже сохранённый task_id, а не обращаемся к expired-объекту
+    # Передаём уже сохранённый task_id, а не обращаемся к expired-объекту
     thread = threading.Thread(target=run_compute_task, args=(task_id, data), daemon=True)
     thread.start()
 
@@ -313,15 +308,11 @@ def start_compute():
 def get_task_status(task_id):
     """Возвращает статус и прогресс задачи (свежие данные из БД)"""
     
-    # 🔹 Вариант 1: Использовать select() вместо get() — всегда свежий запрос
+
     task = db.session.execute(
         select(ComputeTask).where(ComputeTask.id == task_id)
     ).scalar_one_or_none()
     
-    # 🔹 Вариант 2 (альтернатива): Если используете get(), добавьте refresh()
-    # task = db.session.get(ComputeTask, task_id)
-    # if task:
-    #     db.session.refresh(task)  # ← Принудительно обновить из БД
     
     if not task:
         return jsonify({'error': 'Задача не найдена'}), 404
@@ -337,7 +328,7 @@ def get_task_status(task_id):
 
 @features_bp.route('/<int:user_id>', methods=['GET'])
 def get_user_features(user_id):
-    # ✅ Ищем самую свежую сессию для пользователя
+    # Ищем самую свежую сессию для пользователя
     feat = db.session.execute(
         select(UserDropoutFeature)
         .where(UserDropoutFeature.user_id == user_id)
@@ -373,11 +364,11 @@ def list_user_features():
         sort_by = request.args.get('sort_by', 'calculated_at')
         order = request.args.get('order', 'desc')
 
-        # 🔍 Параметры фильтрации сессии
+        # Параметры фильтрации сессии
         cf_id_param = request.args.get('cf_id', type=int)
         course_id_param = request.args.get('course_id', type=int)
 
-        # 1️⃣ Определяем целевую cf_id по приоритету
+        #Определяем целевую cf_id по приоритету
         target_cf_id = cf_id_param
         if target_cf_id is None:
             if course_id_param is not None:
@@ -395,7 +386,7 @@ def list_user_features():
         if target_cf_id is None:
             return jsonify({'data': [], 'total': 0, 'page': page, 'per_page': per_page}), 200
 
-        # 2️⃣ Настройка сортировки
+        # 2Настройка сортировки
         allowed = ['user_id', 'first_try_success_rate', 'avg_attempts_per_step',
                    'std_attempts_per_step', 'pct_steps_with_post_success',
                    'avg_errors_before_success', 'steps_completed', 'calculated_at']
@@ -408,7 +399,7 @@ def list_user_features():
 
         offset = (page - 1) * per_page
 
-        # 3️⃣ Основной запрос (строго по target_cf_id)
+        # Основной запрос (строго по target_cf_id)
         query = select(
             UserDropoutFeature.user_id,
             Learner.last_name,
@@ -427,13 +418,13 @@ def list_user_features():
 
         results = db.session.execute(query).all()
 
-        # 4️⃣ Подсчёт общего количества (должен совпадать с WHERE выше!)
+        # Подсчёт общего количества
         total = db.session.execute(
             select(func.count(UserDropoutFeature.user_id))
             .where(UserDropoutFeature.cf_id == target_cf_id)
         ).scalar() or 0
 
-        # 5️⃣ Формирование ответа
+        # Формирование ответа
         data = []
         for row in results:
             data.append({

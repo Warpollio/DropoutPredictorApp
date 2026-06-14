@@ -3,7 +3,7 @@ import {
   Box, Typography, TextField, Button, Chip, IconButton,
   Table, TableBody, TableCell, TableHead, TableRow, TableContainer,
   TablePagination, TableSortLabel, Paper, Card, CardContent,
-  CircularProgress, Tooltip, Divider
+  CircularProgress, Tooltip, Divider, useTheme, alpha
 } from '@mui/material';
 import { 
   Person, WarningAmber, Add, Remove, CompareArrows, Refresh
@@ -11,14 +11,6 @@ import {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-const styles = {
-  card: { bgcolor: '#1f2937', border: '1px solid #4B5563', color: '#e5e7eb' },
-  cell: { color: '#e5e7eb', borderColor: '#4B5563' },
-  head: { bgcolor: '#374151', color: '#f3f4f6', fontWeight: 600 },
-  sortable: { cursor: 'pointer', '&:hover': { bgcolor: '#4B5563' } }
-};
-
-// 🔹 Колонки таблицы (user_info вынесен отдельно для кастомного рендера)
 const METRIC_COLUMNS = [
   { id: 'steps_completed', label: 'Шагов', numeric: true, sortable: true, higherIsBetter: true },
   { id: 'first_try_success_rate', label: 'Успех с 1-й (%)', numeric: true, sortable: true, percent: true, higherIsBetter: true },
@@ -37,8 +29,10 @@ const COMP_METRICS = [
   { key: 'steps_completed', label: 'Пройдено шагов', percent: false, higherIsBetter: true }
 ];
 
-// === Обновлённые пропсы компонента ===
+
 export default function UserComparisonTable({ courseId = null, cfId = null }) {
+  const theme = useTheme();
+  
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [tableError, setTableError] = useState(null);
@@ -51,7 +45,7 @@ export default function UserComparisonTable({ courseId = null, cfId = null }) {
   const [compareInput, setCompareInput] = useState('');
   const [globalError, setGlobalError] = useState(null);
 
-  // 🔹 Формируем параметры запроса
+
   const buildQueryParams = () => {
     const params = new URLSearchParams({
       page: page + 1,
@@ -60,7 +54,7 @@ export default function UserComparisonTable({ courseId = null, cfId = null }) {
       order: sortConfig.direction,
     });
     
-    // Приоритет: cfId > courseId > ничего (последняя сессия)
+    // cfId > courseId > последняя сессия
     if (cfId) {
       params.append('cf_id', cfId);
     } else if (courseId) {
@@ -88,9 +82,9 @@ export default function UserComparisonTable({ courseId = null, cfId = null }) {
       }
     };
     fetchUsers();
-  }, [page, rowsPerPage, sortConfig, courseId, cfId]); // 🔹 Добавили зависимости
+  }, [page, rowsPerPage, sortConfig, courseId, cfId]);
 
-const handleSort = (field) => {
+  const handleSort = (field) => {
     const isAsc = sortConfig.field === field && sortConfig.direction === 'asc';
     setSortConfig({ field, direction: isAsc ? 'desc' : 'asc' });
   };
@@ -101,13 +95,14 @@ const handleSort = (field) => {
     return typeof val === 'number' ? val.toFixed(2) : val;
   };
 
+
   const getCellSx = (values, val, higherIsBetter) => {
     const nums = values.filter(v => typeof v === 'number' && !isNaN(v));
-    if (nums.length < 2 || val === null) return { color: '#9CA3AF' };
+    if (nums.length < 2 || val === null) return { color: 'text.secondary' };
     const best = higherIsBetter ? Math.max(...nums) : Math.min(...nums);
     const worst = higherIsBetter ? Math.min(...nums) : Math.max(...nums);
-    if (val === best) return { color: '#22c55e', fontWeight: 600 };
-    if (val === worst) return { color: '#ef4444', fontWeight: 500 };
+    if (val === best) return { color: 'success.main', fontWeight: 600 };
+    if (val === worst) return { color: 'error.main', fontWeight: 500 };
     return {};
   };
 
@@ -152,24 +147,55 @@ const handleSort = (field) => {
   const loadedForComp = comparedUsers.filter(u => u.metrics);
   const isComparisonReady = loadedForComp.length >= 2;
 
-  // 🔹 Текст для отображения активного фильтра
+  // отображение активного фильтра
   const filterLabel = cfId 
     ? `Сессия #${cfId}` 
     : courseId 
       ? `Курс #${courseId} (последняя)` 
       : 'Последняя сессия';
 
+
+  const tableStyles = {
+    container: { 
+      bgcolor: 'background.paper', 
+      border: '1px solid',
+      borderColor: 'divider',
+      color: 'text.primary'
+    },
+    head: { 
+      bgcolor: 'background.default', 
+      color: 'text.primary', 
+      fontWeight: 600 
+    },
+    cell: { 
+      color: 'text.primary', 
+      borderColor: 'divider' 
+    },
+    sortable: { 
+      cursor: 'pointer', 
+      '&:hover': { bgcolor: 'action.hover' } 
+    }
+  };
+
   return (
     <Box>
-      {/* === 1. Таблица всех пользователей === */}
+      {/* Таблица всех пользователей*/}
       <Box sx={{ mb: 4 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, flexWrap: 'wrap', gap: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Person color="primary" />
-            <Typography variant="h6">Пользователи</Typography>
-            <Chip label={totalUsers} size="small" variant="outlined" sx={{ color: '#9CA3AF', borderColor: '#4B5563' }} />
+            <Typography variant="h6" color="text.primary">Пользователи</Typography>
+            <Chip 
+              label={totalUsers} 
+              size="small" 
+              variant="outlined" 
+              sx={{ 
+                color: 'text.secondary', 
+                borderColor: 'divider' 
+              }} 
+            />
             
-            {/* 🔹 Индикатор активного фильтра */}
+            {/*активный фильтр */}
             <Chip 
               label={filterLabel} 
               size="small" 
@@ -180,55 +206,115 @@ const handleSort = (field) => {
           </Box>
           
           <Tooltip title="Обновить">
-            <IconButton size="small" onClick={() => setPage(page)} disabled={loadingUsers} sx={{ color: '#9CA3AF' }}>
+            <IconButton 
+              size="small" 
+              onClick={() => setPage(page)} 
+              disabled={loadingUsers} 
+              sx={{ color: 'text.secondary' }}
+            >
               <Refresh fontSize="small" />
             </IconButton>
           </Tooltip>
         </Box>
 
-        {tableError && <Typography variant="caption" color="error" sx={{ mb: 2, display: 'block' }}>⚠️ {tableError}</Typography>}
+        {tableError && (
+          <Typography variant="caption" color="error" sx={{ mb: 2, display: 'block' }}>
+            ⚠️ {tableError}
+          </Typography>
+        )}
 
-        <TableContainer component={Paper} sx={{ ...styles.card, mb: 1 }}>
+        <TableContainer component={Paper} sx={{ ...tableStyles.container, mb: 1 }}>
           <Table size="small">
-            <TableHead sx={styles.head}>
+            <TableHead sx={tableStyles.head}>
               <TableRow>
-                <TableCell sx={{ ...styles.cell, minWidth: 160 }}>Пользователь</TableCell>
+                <TableCell sx={{ ...tableStyles.cell, minWidth: 160 }}>Пользователь</TableCell>
                 {METRIC_COLUMNS.map(col => (
-                  <TableCell key={col.id} align={col.numeric ? 'right' : 'left'} sx={{ ...styles.cell, ...(col.sortable ? styles.sortable : {}) }} onClick={() => col.sortable && handleSort(col.id)}>
+                  <TableCell 
+                    key={col.id} 
+                    align={col.numeric ? 'right' : 'left'} 
+                    sx={{ 
+                      ...tableStyles.cell, 
+                      ...(col.sortable ? tableStyles.sortable : {}) 
+                    }} 
+                    onClick={() => col.sortable && handleSort(col.id)}
+                  >
                     {col.sortable ? (
-                      <TableSortLabel active={sortConfig.field === col.id} direction={sortConfig.field === col.id ? sortConfig.direction : 'asc'} sx={{ color: '#f3f4f6', '& .MuiTableSortLabel-icon': { color: '#9CA3AF !important' } }}>
+                      <TableSortLabel 
+                        active={sortConfig.field === col.id} 
+                        direction={sortConfig.field === col.id ? sortConfig.direction : 'asc'} 
+                        sx={{ 
+                          color: 'text.primary', 
+                          '& .MuiTableSortLabel-icon': { 
+                            color: 'text.secondary !important' 
+                          } 
+                        }}
+                      >
                         {col.label}
                       </TableSortLabel>
                     ) : col.label}
                   </TableCell>
                 ))}
-                <TableCell align="right" sx={styles.cell}>Действия</TableCell>
+                <TableCell align="right" sx={tableStyles.cell}>Действия</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {loadingUsers ? (
-                <TableRow><TableCell colSpan={METRIC_COLUMNS.length + 2} align="center" sx={{ py: 4 }}><CircularProgress size={24} color="inherit" /></TableCell></TableRow>
+                <TableRow>
+                  <TableCell colSpan={METRIC_COLUMNS.length + 2} align="center" sx={{ py: 4 }}>
+                    <CircularProgress size={24} color="primary" />
+                  </TableCell>
+                </TableRow>
               ) : users.length === 0 ? (
-                <TableRow><TableCell colSpan={METRIC_COLUMNS.length + 2} align="center" sx={{ py: 4, color: '#9CA3AF' }}>
-                  Нет данных. {cfId || courseId ? 'Попробуйте выбрать другую сессию' : 'Сначала выполните вычисление признаков.'}
-                </TableCell></TableRow>
+                <TableRow>
+                  <TableCell colSpan={METRIC_COLUMNS.length + 2} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                    Нет данных. {cfId || courseId ? 'Попробуйте выбрать другую сессию' : 'Сначала выполните вычисление признаков.'}
+                  </TableCell>
+                </TableRow>
               ) : (
                 users.map(user => {
                   const isSelected = comparedUsers.some(u => u.id === user.user_id);
                   return (
-                    <TableRow key={user.user_id} hover sx={{ bgcolor: isSelected ? 'rgba(34,197,94,0.1)' : 'transparent' }}>
-                      <TableCell align="left" sx={{ ...styles.cell, verticalAlign: 'top', minWidth: 160 }}>
-                        <Typography variant="body2" sx={{ lineHeight: 1.3, fontWeight: 500 }}>{user.last_name || '—'}</Typography>
-                        <Typography variant="body2" sx={{ lineHeight: 1.3, color: '#9CA3AF' }}>{user.first_name || '—'}</Typography>
-                        <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: '#6B7280' }}>ID: {user.user_id}</Typography>
+                    <TableRow 
+                      key={user.user_id} 
+                      hover 
+                      sx={{ 
+                        bgcolor: isSelected ? alpha(theme.palette.success.main, 0.1) : 'transparent',
+                        '&:hover': { bgcolor: 'action.hover' }
+                      }}
+                    >
+                      <TableCell align="left" sx={{ ...tableStyles.cell, verticalAlign: 'top', minWidth: 160 }}>
+                        <Typography variant="body2" sx={{ lineHeight: 1.3, fontWeight: 500, color: 'text.primary' }}>
+                          {user.last_name || '—'}
+                        </Typography>
+                        <Typography variant="body2" sx={{ lineHeight: 1.3, color: 'text.secondary' }}>
+                          {user.first_name || '—'}
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
+                          ID: {user.user_id}
+                        </Typography>
                       </TableCell>
                       {METRIC_COLUMNS.map(col => (
-                        <TableCell key={col.id} align={col.numeric ? 'right' : 'left'} sx={styles.cell}>
+                        <TableCell key={col.id} align={col.numeric ? 'right' : 'left'} sx={tableStyles.cell}>
                           {fmt(user[col.id], col.percent)}
                         </TableCell>
                       ))}
-                      <TableCell align="right" sx={styles.cell}>
-                        <Button size="small" variant={isSelected ? 'contained' : 'outlined'} startIcon={isSelected ? <Remove fontSize="small" /> : <Add fontSize="small" />} onClick={() => toggleCompare(user)} sx={{ color: isSelected ? '#fff' : '#22c55e', borderColor: '#22c55e', minWidth: 'auto', px: 1 }}>
+                      <TableCell align="right" sx={tableStyles.cell}>
+                        <Button 
+                          size="small" 
+                          variant={isSelected ? 'contained' : 'outlined'} 
+                          startIcon={isSelected ? <Remove fontSize="small" /> : <Add fontSize="small" />} 
+                          onClick={() => toggleCompare(user)} 
+                          sx={{ 
+                            color: isSelected ? 'common.white' : 'success.main', 
+                            borderColor: 'success.main', 
+                            minWidth: 'auto', 
+                            px: 1,
+                            '&:hover': {
+                              borderColor: 'success.dark',
+                              bgcolor: isSelected ? 'success.dark' : alpha(theme.palette.success.main, 0.08)
+                            }
+                          }}
+                        >
                           {isSelected ? 'Убрать' : 'В сравнение'}
                         </Button>
                       </TableCell>
@@ -240,56 +326,126 @@ const handleSort = (field) => {
           </Table>
         </TableContainer>
         <TablePagination
-          component="div" count={totalUsers} page={page} rowsPerPage={rowsPerPage}
-          onPageChange={handleChangePage} onRowsPerPageChange={handleChangeRowsPerPage}
-          rowsPerPageOptions={[10, 20, 50]} labelRowsPerPage="На странице:"
-          sx={{ color: '#9CA3AF', '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': { color: '#e5e7eb' } }}
+          component="div" 
+          count={totalUsers} 
+          page={page} 
+          rowsPerPage={rowsPerPage}
+          onPageChange={handleChangePage} 
+          onRowsPerPageChange={handleChangeRowsPerPage}
+          rowsPerPageOptions={[10, 20, 50]} 
+          labelRowsPerPage="На странице:"
+          sx={{ 
+            color: 'text.secondary', 
+            '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': { 
+              color: 'text.primary' 
+            },
+            '& .MuiTablePagination-select': {
+              color: 'text.primary'
+            }
+          }}
         />
       </Box>
 
-      <Divider sx={{ my: 3, borderColor: '#4B5563' }} />
+      <Divider sx={{ my: 3 }} />
 
-      {/* === 2. Блок сравнения (без изменений, но добавим фильтр в заголовок) === */}
+      {/*Блок сравнения*/}
       <Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
           <CompareArrows color="primary" />
-          <Typography variant="h6">Сравнение ({loadedForComp.length})</Typography>
+          <Typography variant="h6" color="text.primary">Сравнение ({loadedForComp.length})</Typography>
           {(cfId || courseId) && (
-            <Chip label={filterLabel} size="small" variant="outlined" color="info" sx={{ fontSize: '0.7rem' }} />
+            <Chip 
+              label={filterLabel} 
+              size="small" 
+              variant="outlined" 
+              color="info" 
+              sx={{ fontSize: '0.7rem' }} 
+            />
           )}
         </Box>
         
-        {/* ... остальной код блока сравнения без изменений ... */}
         <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <TextField label="Добавить по ID" type="number" value={compareInput} onChange={e => setCompareInput(e.target.value)} fullWidth size="small" onKeyPress={e => e.key === 'Enter' && handleManualAdd()} />
-          <Button variant="contained" startIcon={<Add />} onClick={handleManualAdd} sx={{ height: 40 }}>Добавить</Button>
+          <TextField 
+            label="Добавить по ID" 
+            type="number" 
+            value={compareInput} 
+            onChange={e => setCompareInput(e.target.value)} 
+            fullWidth 
+            size="small" 
+            onKeyPress={e => e.key === 'Enter' && handleManualAdd()}
+            sx={{
+              '& .MuiInputBase-input': { color: 'text.primary' },
+              '& .MuiInputLabel-root': { color: 'text.secondary' },
+              '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
+              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'text.secondary' }
+            }}
+          />
+          <Button 
+            variant="contained" 
+            startIcon={<Add />} 
+            onClick={handleManualAdd} 
+            sx={{ height: 40 }}
+          >
+            Добавить
+          </Button>
         </Box>
-        {globalError && <Typography variant="caption" color="error" sx={{ display: 'block', mb: 2 }}>⚠️ {globalError}</Typography>}
+        
+        {globalError && (
+          <Typography variant="caption" color="error" sx={{ display: 'block', mb: 2 }}>
+            ⚠️ {globalError}
+          </Typography>
+        )}
 
         {comparedUsers.length > 0 && (
           <Box sx={{ display: 'flex', gap: 1, mb: 3, flexWrap: 'wrap' }}>
             {comparedUsers.map(u => (
-              <Chip key={u.id} label={u.loading ? `#${u.id}...` : `#${u.id}`} onDelete={() => !u.loading && setComparedUsers(prev => prev.filter(x => x.id !== u.id))} color={u.error ? 'error' : 'primary'} variant={u.error ? 'filled' : 'outlined'} disabled={u.loading} />
+              <Chip 
+                key={u.id} 
+                label={u.loading ? `#${u.id}...` : `#${u.id}`} 
+                onDelete={() => !u.loading && setComparedUsers(prev => prev.filter(x => x.id !== u.id))} 
+                color={u.error ? 'error' : 'primary'} 
+                variant={u.error ? 'filled' : 'outlined'} 
+                disabled={u.loading}
+                sx={{
+                  '& .MuiChip-deleteIcon': {
+                    color: u.error ? 'error.light' : 'inherit',
+                    '&:hover': { color: u.error ? 'error.main' : 'inherit' }
+                  }
+                }}
+              />
             ))}
           </Box>
         )}
 
         {isComparisonReady && (
           <>
-            <TableContainer component={Paper} sx={{ ...styles.card, mb: 2 }}>
+            <TableContainer component={Paper} sx={{ ...tableStyles.container, mb: 2 }}>
               <Table size="small">
-                <TableHead sx={styles.head}><TableRow>
-                  <TableCell sx={styles.cell}><b>Метрика</b></TableCell>
-                  {loadedForComp.map(u => <TableCell key={u.id} sx={{ ...styles.cell, textAlign: 'center' }}><b>User #{u.id}</b></TableCell>)}
-                </TableRow></TableHead>
+                <TableHead sx={tableStyles.head}>
+                  <TableRow>
+                    <TableCell sx={tableStyles.cell}><b>Метрика</b></TableCell>
+                    {loadedForComp.map(u => (
+                      <TableCell key={u.id} sx={{ ...tableStyles.cell, textAlign: 'center' }}>
+                        <b>User #{u.id}</b>
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
                 <TableBody>
                   {COMP_METRICS.map(m => {
                     const vals = loadedForComp.map(u => u.metrics?.[m.key]);
                     return (
                       <TableRow key={m.key}>
-                        <TableCell sx={styles.cell}>{m.label}</TableCell>
+                        <TableCell sx={tableStyles.cell}>{m.label}</TableCell>
                         {loadedForComp.map(u => (
-                          <TableCell key={u.id} sx={{ ...styles.cell, textAlign: 'center', ...getCellSx(vals, u.metrics?.[m.key], m.higherIsBetter) }}>
+                          <TableCell 
+                            key={u.id} 
+                            sx={{ 
+                              ...tableStyles.cell, 
+                              textAlign: 'center', 
+                              ...getCellSx(vals, u.metrics?.[m.key], m.higherIsBetter) 
+                            }}
+                          >
                             {fmt(u.metrics?.[m.key], m.percent)}
                           </TableCell>
                         ))}
@@ -299,14 +455,17 @@ const handleSort = (field) => {
                 </TableBody>
               </Table>
             </TableContainer>
-            <Card sx={{ ...styles.card, p: 2 }}>
+            {/* 
+            <Card sx={{ ...tableStyles.container, p: 2 }}>
               <Box sx={{ display: 'flex', gap: 1 }}>
                 <WarningAmber color="warning" fontSize="small" sx={{ mt: 0.2 }} />
                 <Typography variant="body2" color="text.secondary">
-                  <b style={{ color: '#22c55e' }}>Зелёный</b> — лучшее, <b style={{ color: '#ef4444' }}>красный</b> — худшее значение в строке.
+                  <b style={{ color: theme.palette.success.main }}>Зелёный</b> — лучшее,{' '}
+                  <b style={{ color: theme.palette.error.main }}>красный</b> — худшее значение в строке.
                 </Typography>
               </Box>
             </Card>
+            */}
           </>
         )}
       </Box>
