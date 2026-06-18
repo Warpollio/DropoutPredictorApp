@@ -5,6 +5,7 @@ import UploadPage from './pages/UploadPage';
 import FeaturePage from './pages/FeaturePage';
 import DashboardPage from './pages/DashboardPage';
 import { createTheme } from '@mui/material/styles'
+import ClassificationPage from './pages/ClassificationPage';
 
 const theme = createTheme({
   palette: {
@@ -27,6 +28,7 @@ function App() {
           <Route path="/" element={<UploadPage />} /> 
           <Route path="/features" element={<FeaturePage />} />
           <Route path="/dashboard/:courseId?" element={<DashboardPage />} />
+          <Route path="/classification" element={<ClassificationPage />} />
         </Routes>
       </Router>
     </ThemeProvider>
