@@ -362,7 +362,7 @@ def import_submissions(csv_filepath):
     added = 0
     total = 0
 
-    # 🔹 3. Временные оптимизации SQLite
+    #  оптимизации SQLite
     db.session.execute(text("PRAGMA journal_mode=WAL"))
     db.session.execute(text("PRAGMA synchronous=OFF"))
     db.session.execute(text("PRAGMA cache_size=-64000"))  # 64 МБ кэш
@@ -391,7 +391,6 @@ def import_submissions(csv_filepath):
                     "attempt_time": to_dt(row.get("attempt_time")),
                     "submission_time": to_dt(row.get("submission_time")),
                     "status": row.get("status") or "pending",
-                    # ✅ Исправлен баг с доступом к score
                     "score": float(row["score"]) if row.get("score") not in (None, "") else None,
                     "dataset": row.get("dataset"),
                     "clue": row.get("clue"),
@@ -400,7 +399,7 @@ def import_submissions(csv_filepath):
                     "hint": row.get("hint")
                 })
 
-                # 🔹 4. Пакетная вставка через executemany (raw SQL)
+                # Пакетная вставка через executemany (raw SQL)
                 if len(batch) >= BATCH_SIZE:
                     result = db.session.execute(UPSERT_QUERY, batch)
                     added += result.rowcount
@@ -419,7 +418,7 @@ def import_submissions(csv_filepath):
         print(f"❌ Ошибка импорта: {e}")
         raise
     finally:
-        # 🔹 Всегда возвращаем безопасные настройки SQLite
+        # возвращаем безопасные настройки SQLite
         db.session.execute(text("PRAGMA synchronous=FULL"))
         db.session.execute(text("PRAGMA temp_store=DEFAULT"))
         db.session.commit()

@@ -11,9 +11,7 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 
-# ─────────────────────────────────────────────────────────────
-# 🔧 Оптимизации SQLite для конкурентного доступа (фоновые задачи)
-# ─────────────────────────────────────────────────────────────
+
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     """
@@ -24,16 +22,16 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     if 'sqlite' in str(dbapi_connection):
         cursor = dbapi_connection.cursor()
         
-        # 🔹 WAL-режим: позволяет читать во время записи (критично для потоков!)
+        # WAL-режим: позволяет читать во время записи (критично для потоков!)
         cursor.execute("PRAGMA journal_mode=WAL")
         
-        # 🔹 Ждать блокировку до 10 секунд вместо стандартных 5
+        # Ждать блокировку до 10
         cursor.execute("PRAGMA busy_timeout=10000")
         
-        # 🔹 Баланс скорости и надёжности (NORMAL быстрее FULL, но безопаснее OFF)
+        # (NORMAL быстрее FULL, но безопаснее OFF)
         cursor.execute("PRAGMA synchronous=NORMAL")
         
-        # 🔹 Кэш 64 МБ в оперативной памяти (уменьшает обращения к диску)
+        # Кэш 64 МБ в оперативной памяти
         cursor.execute("PRAGMA cache_size=-64000")
         
         cursor.close()

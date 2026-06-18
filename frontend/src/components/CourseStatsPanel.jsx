@@ -8,7 +8,7 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-export default function CourseStatsPanel({ sx = {} }) {
+export default function CourseStatsPanel({ sx = {}, onCourseChange}) {
   const [courses, setCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState('');
   const [details, setDetails] = useState(null);
@@ -53,6 +53,12 @@ export default function CourseStatsPanel({ sx = {} }) {
     };
     fetchDetails();
   }, [selectedCourse]);
+
+  useEffect(() => {
+    if (onCourseChange && selectedCourse) {
+      onCourseChange(selectedCourse);
+    }
+  }, [selectedCourse, onCourseChange]);
 
   if (loading) {
     return (

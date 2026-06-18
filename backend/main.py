@@ -433,7 +433,7 @@ def get_course_enrollment(course_id):
         start_date_str = request.args.get('start_date')     
         end_date_str = request.args.get('end_date')
         
-        # 🔹 Парсим даты (с дефолтами)
+
         end_date = datetime.utcnow() if not end_date_str else datetime.strptime(end_date_str, '%Y-%m-%d')
         
         if not start_date_str:
@@ -444,7 +444,7 @@ def get_course_enrollment(course_id):
         else:
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
         
-        # Формат группировки для SQLite
+
         if interval == 'week':
             date_format = '%Y-%W'
         elif interval == 'month':
@@ -452,7 +452,7 @@ def get_course_enrollment(course_id):
         else:  # day
             date_format = '%Y-%m-%d'
         
-        # 🔹 Запрос: считаем регистрации по датам
+
         query = select(
             func.strftime(date_format, Learner.date_joined_utc).label('date'),
             func.count(Learner.user_id).label('count')
@@ -465,7 +465,6 @@ def get_course_enrollment(course_id):
         rows = db.session.execute(query).all()
         data_dict = {row.date: row.count for row in rows}
         
-        # 🔹 Генерируем полный диапазон дат (исправлено!)
         filled_data = []
         
         if interval == 'month':
@@ -516,11 +515,246 @@ def get_course_enrollment(course_id):
     except Exception as e:
         app.logger.error(f"Ошибка enrollment: {e}")
         return jsonify({'error': 'Не удалось загрузить статистику'}), 500
+    
+
+
+# cleanup
+from sqlalchemy import or_, cast, String
+from sqlalchemy import exists, text
+
+@app.route('/api/cleanup/inactive-users', methods=['POST'])
+def cleanup_inactive_users():
+    data = request.get_json(silent=True) or {}
+    min_steps = data.get('min_steps', 0)
+    course_id = data.get('course_id')
+
+    if not course_id:
+        return jsonify({'error': 'Не указан course_id'}), 400
+    if not isinstance(min_steps, int) or min_steps < 0:
+        return jsonify({'error': 'Некорректное значение min_steps'}), 400
+
+    try:
+        with app.app_context():
+            # 🔹 1. Оптимизации SQLite для массовых операций
+            db.session.execute(text("PRAGMA synchronous = OFF"))
+            db.session.execute(text("PRAGMA journal_mode = MEMORY"))
+            db.session.execute(text("PRAGMA cache_size = -2000000"))  # 2GB cache
+            db.session.execute(text("PRAGMA temp_store = MEMORY"))
+
+            # 🔹 2. Создаём временные таблицы (удаляются автоматически после сессии)
+            db.session.execute(text("""
+                CREATE TEMP TABLE IF NOT EXISTS temp_course_steps (
+                    step_id INTEGER PRIMARY KEY
+                )
+            """))
+            db.session.execute(text("""
+                CREATE TEMP TABLE IF NOT EXISTS temp_inactive_users (
+                    user_id INTEGER PRIMARY KEY
+                )
+            """))
+
+            # 🔹 3. Очищаем и заполняем temp_course_steps (шаги курса)
+            db.session.execute(text("DELETE FROM temp_course_steps"))
+            db.session.execute(
+                text("""
+                    INSERT INTO temp_course_steps (step_id)
+                    SELECT step.step_id 
+                    FROM step 
+                    JOIN lesson ON step.lesson_id = lesson.lesson_id 
+                    JOIN module ON lesson.module_id = module.module_id 
+                    WHERE module.course_id = :course_id
+                """),
+                {"course_id": course_id}
+            )
+
+            # 🔹 4. Считаем статистику и заполняем temp_inactive_users
+            db.session.execute(text("DELETE FROM temp_inactive_users"))
+            db.session.execute(
+                text("""
+                    INSERT INTO temp_inactive_users (user_id)
+                    SELECT user_id FROM (
+                        SELECT 
+                            submission.user_id,
+                            COUNT(DISTINCT submission.step_id) as steps_cnt
+                        FROM submission
+                        JOIN temp_course_steps ON submission.step_id = temp_course_steps.step_id
+                        GROUP BY submission.user_id
+                        HAVING steps_cnt < :min_steps
+                    )
+                """),
+                {"min_steps": min_steps}
+            )
+
+            # 🔹 5. Считаем количество удаляемых записей (для отчёта)
+            subs_deleted = db.session.execute(
+                text("""
+                    SELECT COUNT(*) FROM submission 
+                    WHERE user_id IN (SELECT user_id FROM temp_inactive_users)
+                    AND step_id IN (SELECT step_id FROM temp_course_steps)
+                """)
+            ).scalar() or 0
+
+            users_deleted = db.session.execute(
+                text("""
+                    SELECT COUNT(*) FROM learner 
+                    WHERE user_id IN (SELECT user_id FROM temp_inactive_users)
+                """)
+            ).scalar() or 0
+
+            # 🔹 6. Пакетное удаление попыток (по 5000 за раз, чтобы не блокировать БД)
+            BATCH_SIZE = 5000
+            while True:
+                result = db.session.execute(
+                    text(f"""
+                        DELETE FROM submission 
+                        WHERE rowid IN (
+                            SELECT rowid FROM submission 
+                            WHERE user_id IN (SELECT user_id FROM temp_inactive_users)
+                            AND step_id IN (SELECT step_id FROM temp_course_steps)
+                            LIMIT {BATCH_SIZE}
+                        )
+                    """)
+                )
+                db.session.commit()
+                if result.rowcount < BATCH_SIZE:
+                    break
+
+            # 🔹 7. Удаляем пользователей (одним запросом, их меньше)
+            db.session.execute(
+                text("""
+                    DELETE FROM learner 
+                    WHERE user_id IN (SELECT user_id FROM temp_inactive_users)
+                """)
+            )
+
+            # 🔹 8. Возвращаем настройки SQLite и фиксируем транзакцию
+            db.session.execute(text("PRAGMA synchronous = FULL"))
+            db.session.execute(text("PRAGMA journal_mode = DELETE"))
+            db.session.commit()
+
+            return jsonify({'deleted_users': users_deleted, 'deleted_submissions': subs_deleted}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        # Возвращаем настройки даже при ошибке
+        with app.app_context():
+            db.session.execute(text("PRAGMA synchronous = FULL"))
+            db.session.execute(text("PRAGMA journal_mode = DELETE"))
+            db.session.commit()
+        app.logger.error(f"Ошибка очистки: {e}")
+        return jsonify({'error': 'Ошибка при очистке данных'}), 500
+
+
+@app.route('/api/cleanup/teachers', methods=['POST'])
+def cleanup_teachers():
+    data = request.get_json(silent=True) or {}
+    query = data.get('query', '').strip()
+    course_id = data.get('course_id')
+
+    if not query:
+        return jsonify({'error': 'Не указан параметр query'}), 400
+    if not course_id:
+        return jsonify({'error': 'Не указан course_id'}), 400
+
+    try:
+        with app.app_context():
+            # 🔹 Поиск пользователей
+            search_conditions = or_(
+                cast(Learner.user_id, String).like(f'%{query}%'),
+                func.lower(Learner.first_name).like(f'%{query.lower()}%'),
+                func.lower(Learner.last_name).like(f'%{query.lower()}%')
+            )
+
+            matched_ids = db.session.execute(
+                select(Learner.user_id).where(search_conditions)
+            ).scalars().all()
+
+            if not matched_ids:
+                return jsonify({'deleted_teachers': 0, 'deleted_submissions': 0}), 200
+
+            # 🔹 Подзапрос: шаги курса (без передачи списка в Python)
+            course_steps_subq = select(Step.step_id).join(
+                Lesson, Step.lesson_id == Lesson.lesson_id
+            ).join(
+                Module, Lesson.module_id == Module.module_id
+            ).where(
+                Module.course_id == course_id
+            ).subquery()
+
+            # 🔹 Удаляем попытки ТОЛЬКО для шагов этого курса
+            subs_deleted = db.session.execute(
+                select(func.count(Submission.submission_id))
+                .where(Submission.user_id.in_(matched_ids))
+                .where(Submission.step_id.in_(select(course_steps_subq.c.step_id)))
+            ).scalar() or 0
+
+            db.session.execute(
+                Submission.__table__.delete()
+                .where(Submission.user_id.in_(matched_ids))
+                .where(Submission.step_id.in_(select(course_steps_subq.c.step_id)))
+            )
+
+            # 🔹 Удаляем пользователей
+            users_deleted = len(matched_ids)
+            db.session.execute(
+                Learner.__table__.delete().where(Learner.user_id.in_(matched_ids))
+            )
+
+            db.session.commit()
+            return jsonify({'deleted_teachers': users_deleted, 'deleted_submissions': subs_deleted}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Ошибка очистки преподавателей: {e}")
+        return jsonify({'error': 'Ошибка при очистке данных'}), 500
+    data = request.get_json(silent=True) or {}
+    query = data.get('query', '').strip()
+
+    if not query:
+        return jsonify({'error': 'Не указан параметр query'}), 400
+
+    try:
+        with app.app_context():
+            search_conditions = or_(
+                cast(Learner.user_id, String).like(f'%{query}%'),
+                func.lower(Learner.first_name).like(f'%{query.lower()}%'),
+                func.lower(Learner.last_name).like(f'%{query.lower()}%')
+            )
+
+            matched_ids = db.session.execute(
+                select(Learner.user_id).where(search_conditions)
+            ).scalars().all()
+
+            if not matched_ids:
+                return jsonify({'deleted_teachers': 0, 'deleted_submissions': 0}), 200
+
+            subs_deleted = db.session.execute(
+                select(func.count(Submission.submission_id)).where(Submission.user_id.in_(matched_ids))
+            ).scalar() or 0
+            
+            db.session.execute(
+                Submission.__table__.delete().where(Submission.user_id.in_(matched_ids))
+            )
+
+            users_deleted = len(matched_ids)
+            db.session.execute(
+                Learner.__table__.delete().where(Learner.user_id.in_(matched_ids))
+            )
+
+            db.session.commit()
+            return jsonify({'deleted_teachers': users_deleted, 'deleted_submissions': subs_deleted}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Ошибка очистки преподавателей: {e}")
+        return jsonify({'error': 'Ошибка при очистке данных'}), 500
+    
+
 
 from flask.cli import with_appcontext
 import click
 
-# Добавляем команду: flask sync-stats
+
 @app.cli.command("sync-stats")
 @with_appcontext
 def sync_stats_command():

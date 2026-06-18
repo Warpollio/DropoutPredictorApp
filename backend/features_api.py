@@ -27,7 +27,7 @@ def _bulk_upsert(model, data_list, chunk_size=50, max_retries=5):
     for i in range(0, len(data_list), chunk_size):
         chunk = data_list[i:i + chunk_size]
         
-        # 🔹 Retry-логика для каждого чанка
+        # Retry-логика для каждого чанка
         for attempt in range(max_retries):
             try:
                 stmt = sqlite_insert(model).values(chunk)
@@ -122,7 +122,7 @@ def _process_user_metrics(cf_id, user_id, user_submissions, cutoff):
     if user_feats:
         _bulk_upsert(UserDropoutFeature, user_feats)
 
-# Фоновая задача (не блокирует HTTP)
+
 
 import time
 import math
@@ -283,9 +283,8 @@ def _safe_update_progress(task, progress, message, max_retries=3):
                 return False
     return False
 
-# ─────────────────────────────────────────────────────────────
-# 🌐 Эндпоинты
-# ─────────────────────────────────────────────────────────────
+
+# Эндпоинты
 
 @features_bp.route('/compute', methods=['POST'])
 def start_compute():
