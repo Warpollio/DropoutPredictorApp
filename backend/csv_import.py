@@ -1,24 +1,29 @@
 import csv
-from pathlib import Path
-from sqlalchemy import insert
-from flask.cli import with_appcontext
-import click
-from config import app, db
-from models import Course, Module, Step, Learner, Submission, Comment, Lesson
-from sqlalchemy import insert, select, func
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
 import os
-
+from pathlib import Path
 from datetime import datetime
 
-def _parse_datetime(val):
+from flask.cli import with_appcontext
+import click
+from sqlalchemy import select, func, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-    if not val: return None
+from config import app, db
+from models import Course, Module, Step, Learner, Submission, Comment, Lesson
+
+# Размер пакета
+BATCH_SIZE = 10000
+
+
+def _parse_datetime(val):
+    if not val: 
+        return None
     val = str(val).strip()
 
-    if '+' in val: val = val.split('+')[0].strip()
-    elif val.endswith('Z'): val = val[:-1].strip()
+    if '+' in val: 
+        val = val.split('+')[0].strip()
+    elif val.endswith('Z'): 
+        val = val[:-1].strip()
     
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
         try:
@@ -28,40 +33,20 @@ def _parse_datetime(val):
     return None
 
 
-# Размер пакета
-BATCH_SIZE = 10000
-
 def _bulk_insert_or_ignore(model, rows):
-    """Вспомогательная функция для пакетной вставки INSERT OR IGNORE"""
     if not rows:
         return 0
-    stmt = insert(model).values(rows).prefix_with("OR IGNORE")
+    pk_cols = [col.name for col in model.__table__.primary_key.columns]
+    stmt = pg_insert(model).values(rows)
+    stmt = stmt.on_conflict_do_nothing(index_elements=pk_cols)
     result = db.session.execute(stmt)
     return result.rowcount
 
-def _bulk_upsert(model, data_list):
-    if not data_list:
-        return 0
-    
-    stmt = sqlite_insert(model).values(data_list)
-    
-    stmt = stmt.on_conflict_do_update(
-        index_elements=['submission_id'],
-        set_={
-            col.name: stmt.excluded[col.name] 
-            for col in model.__table__.columns 
-            if col.name != 'submission_id'
-        }
-    )
-    
-    result = db.session.execute(stmt)
-    return result.rowcount
 
 @app.cli.command("import-data")
 @click.argument("data_dir", type=click.Path(exists=True))
 @with_appcontext
 def import_data_cli(data_dir):
-    """Импорт CSV данных в БД. Пример: flask import-data ./data"""
     data_path = Path(data_dir)
     
     print("📥 Запуск импорта данных...")
@@ -78,9 +63,8 @@ def import_structure(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
         return {"courses": 0, "modules": 0, "lessons": 0, "steps": 0}
 
-    print(f"📦 [1/4] Импорт структуры: {os.path.basename(csv_filepath)}")
+    print(f"📦Импорт структуры: {os.path.basename(csv_filepath)}")
 
-    # для статистики
     c_before = db.session.execute(select(func.count()).select_from(Course)).scalar()
     m_before = db.session.execute(select(func.count()).select_from(Module)).scalar()
     l_before = db.session.execute(select(func.count()).select_from(Lesson)).scalar()
@@ -135,7 +119,6 @@ def import_structure(csv_filepath):
                     "discrimination": 0.5
                 })
 
-
             if len(courses) >= BATCH_SIZE:
                 _bulk_insert_or_ignore(Course, courses); db.session.commit(); courses.clear()
             if len(modules) >= BATCH_SIZE:
@@ -145,7 +128,6 @@ def import_structure(csv_filepath):
             if len(steps) >= BATCH_SIZE:
                 _bulk_insert_or_ignore(Step, steps); db.session.commit(); steps.clear()
 
-    # остатки
     if courses: _bulk_insert_or_ignore(Course, courses)
     if modules: _bulk_insert_or_ignore(Module, modules)
     if lessons: _bulk_insert_or_ignore(Lesson, lessons)
@@ -161,30 +143,22 @@ def import_structure(csv_filepath):
     return {"courses": added_c, "modules": added_m, "lessons": added_l, "steps": added_s}
 
 
-
-# difficulty, discrimination
-
 def _bulk_update_steps(updates_list):
     if not updates_list:
         return
-
-
     db.session.bulk_update_mappings(Step, updates_list)
     db.session.commit()
 
 
 def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
-
     if not os.path.exists(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
         return {"updated": 0, "skipped": 0, "not_found": 0}
 
-    print(f"🔄  Обновление метрик шагов: {os.path.basename(csv_filepath)}")
-
-
+    print(f"🔄 Обновление метрик шагов: {os.path.basename(csv_filepath)}")
     total_before = db.session.execute(select(func.count()).select_from(Step)).scalar()
 
-    updates = []  # Список словарей для bulk_update_mappings
+    updates = []
     stats = {"updated": 0, "skipped": 0, "not_found": 0}
     step_ids_to_update = set()
 
@@ -199,7 +173,6 @@ def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
                 step_id = int(sid)
                 difficulty = float(row.get("difficulty") or 0.5)
                 discrimination = float(row.get("discrimination") or 0.5)
-
 
                 difficulty = max(0.0, min(1.0, difficulty))
                 discrimination = max(-1.0, min(1.0, discrimination))
@@ -216,18 +189,15 @@ def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
                 stats["skipped"] += 1
                 continue
 
-
             if len(updates) >= batch_size:
                 _bulk_update_steps(updates)
                 stats["updated"] += len(updates)
                 updates.clear()
 
-
     if updates:
         _bulk_update_steps(updates)
         stats["updated"] += len(updates)
         updates.clear()
-
 
     if step_ids_to_update:
         existing = db.session.execute(
@@ -235,23 +205,18 @@ def update_step_metrics(csv_filepath, batch_size=BATCH_SIZE):
         ).scalars().all()
         stats["not_found"] = len(step_ids_to_update) - len(existing)
 
-    #  статистика
     total_after = db.session.execute(select(func.count()).select_from(Step)).scalar()
     added_new = total_after - total_before 
 
     print(f"✅ Обновлено: {stats['updated']} записей")
-    if stats["skipped"]:
-        print(f"⚠️ Пропущено (ошибки в CSV): {stats['skipped']}")
-    if stats["not_found"]:
-        print(f"⚠️ Не найдено в БД: {stats['not_found']} step_id")
-    if added_new > 0:
-        print(f"ℹ️  Добавлено новых шагов: {added_new}")
+    if stats["skipped"]: print(f"️ Пропущено (ошибки в CSV): {stats['skipped']}")
+    if stats["not_found"]: print(f"⚠️ Не найдено в БД: {stats['not_found']} step_id")
+    if added_new > 0: print(f"ℹ️ Добавлено новых шагов: {added_new}")
 
     return stats
 
 
 # 2. Импорт пользователей
-
 def import_learners(csv_filepath):
     if not os.path.exists(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
@@ -278,7 +243,8 @@ def import_learners(csv_filepath):
                 db.session.commit()
                 learners.clear()
 
-    if learners: added += _bulk_insert_or_ignore(Learner, learners)
+    if learners: 
+        added += _bulk_insert_or_ignore(Learner, learners)
     db.session.commit()
     print(f"   ✅ Пользователей добавлено: {added}")
     return {"users_added": added}
@@ -291,103 +257,47 @@ def to_dt(val):
     try:
         return datetime.utcfromtimestamp(float(val))
     except Exception as e:
-        print(f"Oшибка парсинга даты '{val}': {e}")
+        print(f"Ошибка парсинга даты '{val}': {e}")
         return None
-'''
-def import_submissions(csv_filepath):
-    if not os.path.exists(csv_filepath):
-        print(f"Файл не найден: {csv_filepath}")
-        return
 
-    print(f"Импорт попыток: {csv_filepath}")
-    subs, added = [], 0
-    total = 0
-    with open(csv_filepath, "r", encoding="utf-8") as f:
-        for i, row in enumerate(csv.DictReader(f)):
-            #if i >= 100: break
-            total += 1
-            sid, step_id, uid = row.get("submission_id"), row.get("step_id"), row.get("user_id")
-            if not sid or not step_id or not uid: continue
-
-            rc = row.get("reply_clear", "0")
-            subs.append({
-                "submission_id": int(sid),
-                "step_id": int(step_id),
-                "user_id": int(uid),
-                "attempt_time": to_dt(row.get("attempt_time")),
-                "submission_time": to_dt(row.get("submission_time")),
-                "status": row.get("status") or "pending",
-                "score": float(row["score"]) if row.get("score") else None,
-                "dataset": row.get("dataset") or None,
-                "clue": row.get("clue") or None,
-                "reply": row.get("reply") or None,
-                "reply_clear": str(rc).lower() in ("1", "true", "yes", "t", "y"),
-                "hint": row.get("hint") or None
-            })
-
-            if len(subs) >= BATCH_SIZE:
-                added += _bulk_upsert(Submission, subs)
-                db.session.commit()
-                subs.clear()
-
-    if subs: added += _bulk_upsert(Submission, subs)
-    db.session.commit()
-    print(f"Попыток добавлено: {added}")
-    return {"submissions_added": added, "skipped": total - added}
-'''
-from sqlalchemy import text
-
-UPSERT_QUERY = text("""
-    INSERT INTO submission (
-        submission_id, step_id, user_id, attempt_time, submission_time,
-        status, score, dataset, clue, reply, reply_clear, hint
-    )
-    VALUES (
-        :submission_id, :step_id, :user_id, :attempt_time, :submission_time,
-        :status, :score, :dataset, :clue, :reply, :reply_clear, :hint
-    )
-    ON CONFLICT(submission_id) DO UPDATE SET
-        step_id=excluded.step_id, user_id=excluded.user_id,
-        attempt_time=excluded.attempt_time, submission_time=excluded.submission_time,
-        status=excluded.status, score=excluded.score, dataset=excluded.dataset,
-        clue=excluded.clue, reply=excluded.reply, reply_clear=excluded.reply_clear, hint=excluded.hint
-""")
 
 def import_submissions(csv_filepath):
     if not os.path.exists(csv_filepath):
         print(f"❌ Файл не найден: {csv_filepath}")
         return
 
-    print(f" Импорт попыток: {csv_filepath}")
+    print(f"📥 Импорт попыток: {csv_filepath}")
+
+    valid_user_ids = set(db.session.execute(select(Learner.user_id)).scalars())
+    print(f"   🔍 Найдено {len(valid_user_ids)} пользователей в БД")
+
     added = 0
     total = 0
-
-    #  оптимизации SQLite
-    db.session.execute(text("PRAGMA journal_mode=WAL"))
-    db.session.execute(text("PRAGMA synchronous=OFF"))
-    db.session.execute(text("PRAGMA cache_size=-64000"))  # 64 МБ кэш
-    db.session.execute(text("PRAGMA temp_store=MEMORY"))
+    skipped_fk = 0
+    batch = []
 
     try:
         with open(csv_filepath, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            batch = []
-
             for row in reader:
                 total += 1
                 sid = row.get("submission_id")
                 step_id = row.get("step_id")
                 uid = row.get("user_id")
 
-                # Пропускаем строки без ключевых ID
                 if not (sid and step_id and uid):
                     continue
 
-                # 🔹 Минимум вызовов функций, безопасный парсинг
+                uid_int = int(uid)
+
+                if uid_int not in valid_user_ids:
+                    skipped_fk += 1
+                    continue
+
                 batch.append({
                     "submission_id": int(sid),
                     "step_id": int(step_id),
-                    "user_id": int(uid),
+                    "user_id": uid_int,
                     "attempt_time": to_dt(row.get("attempt_time")),
                     "submission_time": to_dt(row.get("submission_time")),
                     "status": row.get("status") or "pending",
@@ -399,40 +309,45 @@ def import_submissions(csv_filepath):
                     "hint": row.get("hint")
                 })
 
-                # Пакетная вставка через executemany (raw SQL)
+
                 if len(batch) >= BATCH_SIZE:
-                    result = db.session.execute(UPSERT_QUERY, batch)
+                    stmt = pg_insert(Submission).values(batch)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=['submission_id'],
+                        set_={
+                            c.name: stmt.excluded[c.name]
+                            for c in Submission.__table__.columns
+                            if c.name != 'submission_id'
+                        }
+                    )
+                    result = db.session.execute(stmt)
                     added += result.rowcount
+                    db.session.commit()
                     batch.clear()
 
             # Финальный батч
             if batch:
-                result = db.session.execute(UPSERT_QUERY, batch)
+                stmt = pg_insert(Submission).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=['submission_id'],
+                    set_={
+                        c.name: stmt.excluded[c.name]
+                        for c in Submission.__table__.columns
+                        if c.name != 'submission_id'
+                    }
+                )
+                result = db.session.execute(stmt)
                 added += result.rowcount
+                db.session.commit()
 
-        db.session.commit()
-        print(f"✅ Готово. Обработано: {total}, обновлено/добавлено: {added}")
+        print(f"✅ Готово. Всего строк: {total}, Добавлено/Обновлено: {added}, Пропущено (нет пользователя): {skipped_fk}")
 
     except Exception as e:
         db.session.rollback()
         print(f"❌ Ошибка импорта: {e}")
         raise
-    finally:
-        # возвращаем безопасные настройки SQLite
-        db.session.execute(text("PRAGMA synchronous=FULL"))
-        db.session.execute(text("PRAGMA temp_store=DEFAULT"))
-        db.session.commit()
 
     return {"submissions_added": added, "skipped": total - added}
-
-INSERT_COMMENT_SQL = text("""
-    INSERT OR IGNORE INTO comment (
-        comment_id, user_id, step_id, parent_comment_id, time_utc, deleted, text
-    )
-    VALUES (
-        :comment_id, :user_id, :step_id, :parent_comment_id, :time_utc, :deleted, :text
-    )
-""")
 
 # 4. Импорт комментариев
 def import_comments(csv_filepath):
@@ -440,72 +355,77 @@ def import_comments(csv_filepath):
         print(f"⚠️ Файл не найден: {csv_filepath}")
         return
 
-    print(f"💬 [4/4] Импорт комментариев: {csv_filepath}")
+    print(f" [4/4] Импорт комментариев: {csv_filepath}")
+
+
+    valid_user_ids = set(db.session.execute(select(Learner.user_id)).scalars())
+    valid_step_ids = set(db.session.execute(select(Step.step_id)).scalars())
+    print(f"   🔍 Найдено {len(valid_user_ids)} пользователей и {len(valid_step_ids)} шагов в БД")
+
     added = 0
     total = 0
-
-    # 🔹 Временные оптимизации SQLite
-    db.session.execute(text("PRAGMA journal_mode=WAL"))
-    db.session.execute(text("PRAGMA synchronous=OFF"))
-    db.session.execute(text("PRAGMA cache_size=-64000"))  # 64 МБ кэш
-    db.session.execute(text("PRAGMA temp_store=MEMORY"))
+    skipped_fk = 0
+    batch = []
 
     csv.field_size_limit(10**8)
 
     try:
         with open(csv_filepath, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            batch = []
-
             for row in reader:
                 total += 1
                 cid = row.get("comment_id")
                 uid = row.get("user_id")
                 sid = row.get("step_id")
 
-                # Пропускаем строки без ключевых ID
                 if not (cid and uid and sid):
                     continue
 
+                uid_int = int(uid)
+                sid_int = int(sid)
+
+                if uid_int not in valid_user_ids or sid_int not in valid_step_ids:
+                    skipped_fk += 1
+                    continue
+
                 pid_raw = row.get("parent_comment_id", "0")
+
                 parent_id = None if not pid_raw or str(pid_raw).strip() == "0" else int(pid_raw)
 
                 del_raw = row.get("deleted", "0")
 
                 batch.append({
                     "comment_id": int(cid),
-                    "user_id": int(uid),
-                    "step_id": int(sid),
-                    "parent_comment_id": parent_id,
+                    "user_id": uid_int,
+                    "step_id": sid_int,
+                    "parent_comment_id": None, #parent_id
                     "time_utc": to_dt(row.get("time_utc")),
                     "deleted": str(del_raw).lower() in ("1", "true", "yes", "t", "y"),
                     "text": row.get("text", "")
-                    #"text": ""
                 })
 
-                # 🔹 Пакетная вставка через raw SQL
                 if len(batch) >= BATCH_SIZE:
-                    result = db.session.execute(INSERT_COMMENT_SQL, batch)
+                    stmt = pg_insert(Comment).values(batch)
+                    stmt = stmt.on_conflict_do_nothing(index_elements=['comment_id'])
+                    result = db.session.execute(stmt)
                     added += result.rowcount
+                    db.session.commit()
                     batch.clear()
 
             # Финальный батч
             if batch:
-                result = db.session.execute(INSERT_COMMENT_SQL, batch)
+                stmt = pg_insert(Comment).values(batch)
+                stmt = stmt.on_conflict_do_nothing(index_elements=['comment_id'])
+                result = db.session.execute(stmt)
                 added += result.rowcount
+                db.session.commit()
 
-        db.session.commit()
-        print(f"   ✅ Комментариев добавлено: {added}")
+        print(f"   ✅ Комментариев добавлено: {added}, пропущено (нет FK): {skipped_fk}")
 
     except Exception as e:
         db.session.rollback()
         print(f"❌ Ошибка импорта комментариев: {e}")
         raise
-    finally:
-        # 🔹 Всегда возвращаем безопасные настройки SQLite
-        db.session.execute(text("PRAGMA synchronous=FULL"))
-        db.session.execute(text("PRAGMA temp_store=DEFAULT"))
-        db.session.commit()
 
     return {"comments_added": added, "skipped": total - added}
 
