@@ -48,7 +48,7 @@ export default function InactiveUsersCleanup({ courseId }) {
         </Typography>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Удаляет пользователей и их попытки, если они решили меньше указанного количества шагов.
+        Удаляет попытки пользователей, которые решили меньше указанного количества шагов.
       </Typography>
       
       <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end', mb: 2 }}>
@@ -80,7 +80,7 @@ export default function InactiveUsersCleanup({ courseId }) {
 
       {result && (
         <Alert severity="success" sx={{ mt: 1 }}>
-          Удалено студентов: <b>{result.deleted_users}</b>, попыток: <b>{result.deleted_submissions}</b>
+          Студентов затронуто: <b>{result.deleted_users}</b>, решений удалено: <b>{result.deleted_submissions}</b>
         </Alert>
       )}
       {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}

@@ -4,7 +4,7 @@ import { PersonRemove } from '@mui/icons-material';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-export default function TeachersCleanup() {
+export default function TeachersCleanup({ courseId }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -16,7 +16,7 @@ export default function TeachersCleanup() {
       return;
     }
     if (!query.trim()) {
-      setError('Введите имя или ID преподавателя');
+      setError('Введите имя или ID пользователя');
       return;
     }
 
@@ -47,16 +47,16 @@ export default function TeachersCleanup() {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
         <PersonRemove color="error" />
         <Typography variant="subtitle1" color="text.primary" fontWeight={600}>
-          Удаление преподавателей
+          Удаление пользователей
         </Typography>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Поиск по имени или ID для удаления аккаунтов преподавателей и связанных данных.
+        Поиск по имени или ID для удаления решений конкретных пользователей.
       </Typography>
       
       <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end', mb: 2 }}>
         <TextField
-          label="Имя или ID преподавателя"
+          label="Имя или ID пользователя"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           size="small"
@@ -83,7 +83,7 @@ export default function TeachersCleanup() {
 
       {result && (
         <Alert severity="success" sx={{ mt: 1 }}>
-          Удалено преподавателей: <b>{result.deleted_teachers}</b>, попыток: <b>{result.deleted_submissions}</b>
+          Решений удалено: <b>{result.deleted_submissions}</b>
         </Alert>
       )}
       {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
