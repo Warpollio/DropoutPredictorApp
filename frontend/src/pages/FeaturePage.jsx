@@ -1,15 +1,14 @@
 import { useState, useEffect } from 'react';
 import {
-  Paper, Typography, Box, Card, CardContent,
-  Divider, Chip, Alert, Button, TextField,
-  FormControl, Select, MenuItem, LinearProgress, useTheme
+  Paper, Typography, Box, Divider, Chip, Alert, 
+  Button, FormControl, InputLabel, Select, MenuItem, 
+  LinearProgress, useTheme
 } from '@mui/material';
-import { AutoFixHigh, DataObject, Person, WarningAmber, School } from '@mui/icons-material';
+import { AutoFixHigh, School } from '@mui/icons-material';
 import axios from 'axios';
 
 import UserComparisonTable from '../components/features/UserComparisonTable';
 import CoursePicker from '../components/common/CoursePicker';
-
 import useFeatureComputation from '../hooks/useFeatureComputation';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -17,15 +16,13 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 export default function FeaturePage() {
   const theme = useTheme();
   
-  //вычисление фич
-  const [userId, setUserId] = useState('');
-  const [cutoffDate, setCutoffDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [loading, setLoading] = useState(false);
 
-  //выбор курса
   const [courses, setCourses] = useState([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [selectedCourse, setSelectedCourse] = useState(null);
+
+
+  const [obsDays, setObsDays] = useState(30);
 
   const {
     start: startCompute,
@@ -38,7 +35,16 @@ export default function FeaturePage() {
     isComputing
   } = useFeatureComputation();
 
-  //список курсов
+  // Table refresh
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (status === 'completed' && result) {
+      setRefreshKey(prev => prev + 1);
+    }
+  }, [status, result]);
+
+  // Загрузка списка курсов
   useEffect(() => {
     const fetchCourses = async () => {
       try {
@@ -49,7 +55,6 @@ export default function FeaturePage() {
         }
       } catch (err) {
         console.error('❌ Ошибка загрузки курсов:', err);
-        // setError('Не удалось загрузить список курсов');
       } finally {
         setCoursesLoading(false);
       }
@@ -57,25 +62,20 @@ export default function FeaturePage() {
     fetchCourses();
   }, [selectedCourse]);
 
-  //кнопка "вычислить"
-  const handleCompute = () => {
-    const cutoff = cutoffDate ? `${cutoffDate}T23:59:59` : new Date().toISOString();
-    const body = {
-      cutoff_date: cutoff,
-      user_id: userId ? parseInt(userId, 10) : undefined,
-      ...(selectedCourse && { course_id: selectedCourse })
-    };
-    startCompute(body);
-  };
-
-  //сброс при смене курса
   useEffect(() => {
-    resetCompute();
+
+    if (!isComputing) {
+      resetCompute();
+    }
   }, [selectedCourse]);
 
-  // смена курса через компактный селект
-  const handleCourseChange = (event) => {
-    setSelectedCourse(event.target.value);
+  // Запуск вычисления
+  const handleCompute = () => {
+    if (!selectedCourse) return;
+    startCompute({
+      course_id: selectedCourse,
+      obs_days: obsDays
+    });
   };
 
   if (!selectedCourse) {
@@ -92,11 +92,9 @@ export default function FeaturePage() {
     );
   }
 
-  //основной интерфейс
   return (
     <Paper elevation={2} sx={{ p: 3, mb: 4, bgcolor: 'background.paper' }}>
       
-      {/*селектор смены курса*/}
       <Box sx={{ 
         display: 'flex', gap: 2, mb: 3, alignItems: 'center', 
         flexWrap: 'wrap', p: 2, 
@@ -114,7 +112,7 @@ export default function FeaturePage() {
         <FormControl sx={{ minWidth: 250, flex: 1 }} size="small">
           <Select 
             value={selectedCourse} 
-            onChange={handleCourseChange}
+            onChange={(e) => setSelectedCourse(e.target.value)}
             sx={{
               '& .MuiSelect-select': {
                 bgcolor: 'background.default',
@@ -123,32 +121,17 @@ export default function FeaturePage() {
                 py: 0.5,
                 px: 1.5
               },
-              '& .MuiOutlinedInput-notchedOutline': { 
-                borderColor: 'divider' 
-              },
-              '&:hover .MuiOutlinedInput-notchedOutline': { 
-                borderColor: 'text.secondary' 
-              },
-              '& .MuiSvgIcon-root': { 
-                color: 'text.secondary' 
-              },
+              '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
+              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'text.secondary' },
+              '& .MuiSvgIcon-root': { color: 'text.secondary' },
               '& .MuiMenuItem-root': {
                 bgcolor: 'background.default',
                 color: 'text.primary',
                 fontSize: '0.875rem',
-                '&:hover': { 
-                  bgcolor: 'action.hover' 
-                },
-                '&.Mui-selected': { 
-                  bgcolor: 'action.selected',
-                  '&:hover': { bgcolor: 'action.hover' }
-                }
+                '&:hover': { bgcolor: 'action.hover' },
+                '&.Mui-selected': { bgcolor: 'action.selected' }
               },
-              '& .MuiPaper-root': { 
-                bgcolor: 'background.paper',
-                border: '1px solid',
-                borderColor: 'divider'
-              }
+              '& .MuiPaper-root': { bgcolor: 'background.paper' }
             }}
           >
             {courses.map(c => (
@@ -158,83 +141,53 @@ export default function FeaturePage() {
             ))}
           </Select>
         </FormControl>
-        <Chip 
-          label={`ID: ${selectedCourse}`} 
-          size="small" 
-          variant="outlined"
-          sx={{ 
-            color: 'text.secondary', 
-            borderColor: 'divider' 
-          }}
-        />
+        <Chip label={`ID: ${selectedCourse}`} size="small" variant="outlined" />
       </Box>
 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
         <AutoFixHigh color="primary" />
         <Typography variant="h6" color="text.primary">
-          Вычисление признаков для предсказания отчисления
+          Вычисление признаков
         </Typography>
       </Box>
 
       <Divider sx={{ my: 2 }} />
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3, alignItems: 'flex-end' }}>
-        <Box sx={{ flex: '1 1 200px' }}>
-          <TextField
-            label="User ID (опционально)"
-            type="number"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            fullWidth
+        <FormControl sx={{ minWidth: 200 }}>
+          <InputLabel id="obs-days-label" sx={{ color: 'text.secondary' }}>
+            Интервал наблюдения (дней)
+          </InputLabel>
+          <Select
+            labelId="obs-days-label"
+            value={obsDays}
+            label="Интервал наблюдения (дней)"
+            onChange={(e) => setObsDays(e.target.value)}
             size="small"
-            placeholder="Оставьте пустым для всех"
             sx={{ 
               '& .MuiInputBase-input': { color: 'text.primary' },
-              '& .MuiInputLabel-root': { color: 'text.secondary' },
-              '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
-              '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'text.secondary' },
-              '& .MuiInputBase-input::placeholder': { color: 'text.secondary', opacity: 0.7 }
+              '& .MuiInputLabel-root': { color: 'text.secondary' }
             }}
-          />
-        </Box>
-
-        <Box sx={{ flex: '1 1 200px' }}>
-          <Typography variant="caption" display="block" sx={{ mb: 0.5, color: 'text.secondary' }}>
-            Дата отсечения
-          </Typography>
-          <input
-            type="date"
-            value={cutoffDate}
-            onChange={(e) => setCutoffDate(e.target.value)}
-            style={{
-              width: '100%',
-              background: 'background.default',
-              border: '1px solid',
-              borderColor: 'divider',
-              borderRadius: 4,
-              padding: '8px 10px',
-              color: theme.palette.text.primary,
-              fontSize: '0.875rem',
-              cursor: 'pointer',
-              outline: 'none',
-              boxSizing: 'border-box'
-            }}
-          />
-        </Box>
-
-        <Box sx={{ flex: '1 1 200px' }}>
-          <Button 
-            variant="contained" 
-            onClick={handleCompute} 
-            disabled={loading} 
-            fullWidth
           >
-            {loading ? 'Вычисление...' : '🚀 Вычислить'}
-          </Button>
-        </Box>
+            <MenuItem value={7}>7 дней (1 неделя)</MenuItem>
+            <MenuItem value={14}>14 дней (2 недели)</MenuItem>
+            <MenuItem value={30}>30 дней (1 месяц)</MenuItem>
+            <MenuItem value={60}>60 дней (2 месяца)</MenuItem>
+            <MenuItem value={90}>90 дней (3 месяца)</MenuItem>
+          </Select>
+        </FormControl>
+
+        <Button 
+          variant="contained" 
+          onClick={handleCompute} 
+          disabled={isComputing}
+          sx={{ height: 40 }}
+        >
+          {isComputing ? '⏳ Вычисление...' : '🚀 Запустить'}
+        </Button>
       </Box>
 
-      {/*прогрес бар*/}
+
       {isComputing && (
         <Box sx={{ mb: 3 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
@@ -252,9 +205,7 @@ export default function FeaturePage() {
               height: 8, 
               borderRadius: 4,
               bgcolor: 'action.hover',
-              '& .MuiLinearProgress-bar': { 
-                bgcolor: 'primary.main' 
-              }
+              '& .MuiLinearProgress-bar': { bgcolor: 'primary.main' }
             }} 
           />
           {message && (
@@ -265,13 +216,14 @@ export default function FeaturePage() {
         </Box>
       )}
 
+
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => resetCompute()}>
           {error}
         </Alert>
       )}
       
-      {/*результат */}
+
       {result && !isComputing && (
         <Box sx={{ 
           p: 2, 
@@ -295,18 +247,10 @@ export default function FeaturePage() {
             </Box>
             <Box>
               <Typography variant="caption" display="block" color="text.secondary">
-                Шагов
-              </Typography>
-              <Typography variant="h6" color="text.primary">
-                {result.processed_steps}
-              </Typography>
-            </Box>
-            <Box>
-              <Typography variant="caption" display="block" color="text.secondary">
-                Дата отсечения
+                Интервал
               </Typography>
               <Typography variant="body2" color="text.primary">
-                {new Date(result.cutoff_date).toLocaleDateString('ru-RU')}
+                {obsDays} дней
               </Typography>
             </Box>
           </Box>
@@ -314,7 +258,9 @@ export default function FeaturePage() {
       )}
 
       <Divider sx={{ my: 3 }} />
-      <UserComparisonTable courseId={selectedCourse} />
+      
+      <UserComparisonTable courseId={selectedCourse}
+                           refreshTrigger={refreshKey}/>
     </Paper>
   );
 }

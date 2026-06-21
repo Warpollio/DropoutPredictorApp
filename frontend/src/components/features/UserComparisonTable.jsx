@@ -30,7 +30,7 @@ const COMP_METRICS = [
 ];
 
 
-export default function UserComparisonTable({ courseId = null, cfId = null }) {
+export default function UserComparisonTable({ courseId = null, cfId = null, refreshTrigger = 0 }) {
   const theme = useTheme();
   
   const [users, setUsers] = useState([]);
@@ -82,7 +82,7 @@ export default function UserComparisonTable({ courseId = null, cfId = null }) {
       }
     };
     fetchUsers();
-  }, [page, rowsPerPage, sortConfig, courseId, cfId]);
+  }, [page, rowsPerPage, sortConfig, courseId, cfId, refreshTrigger]);
 
   const handleSort = (field) => {
     const isAsc = sortConfig.field === field && sortConfig.direction === 'asc';

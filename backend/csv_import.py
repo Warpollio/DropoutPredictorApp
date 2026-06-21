@@ -261,6 +261,136 @@ def to_dt(val):
         return None
 
 
+'''
+# copy
+def import_submissions(csv_filepath):
+    if not os.path.exists(csv_filepath):
+        print("❌ Файл не найден")
+        return
+
+    print(f"📥 Импорт: {os.path.basename(csv_filepath)}")
+    
+    raw_conn = db.engine.raw_connection()
+    try:
+        with raw_conn.cursor() as cur:
+            # 1️⃣ Отключаем FK-проверки
+            cur.execute("SET session_replication_role = replica;")
+            
+            # 2️⃣ Загружаем CSV напрямую через COPY (STDIN работает в Docker без монтирования папок)
+            with open(csv_filepath, 'r', encoding='utf-8') as f:
+                cur.copy_expert("""
+                    COPY submission (submission_id, step_id, user_id, attempt_time, submission_time, status, score)
+                    FROM STDIN WITH CSV HEADER
+                """, f)
+
+            # 3️⃣ Включаем FK-проверки обратно
+            cur.execute("SET session_replication_role = DEFAULT;")
+            raw_conn.commit()
+            
+        print("✅ Готово!")
+    except Exception as e:
+        raw_conn.rollback()
+        print(f"❌ Ошибка: {e}")
+        raise
+    finally:
+        raw_conn.close()
+'''
+'''
+
+temp table
+TARGET_COLS = [
+    'submission_id', 'step_id', 'user_id', 'attempt_time', 'submission_time',
+    'status', 'score', 'dataset', 'clue', 'reply', 'reply_clear', 'hint'
+]
+
+def import_submissions(csv_filepath):
+    if not os.path.exists(csv_filepath):
+        print(f"❌ Файл не найден: {csv_filepath}")
+        return {"submissions_added": 0, "skipped": 0}
+
+    print(f"📥 Быстрый импорт попыток: {os.path.basename(csv_filepath)}")
+
+    with open(csv_filepath, 'r', encoding='utf-8') as f:
+        csv_cols = [col.strip() for col in f.readline().strip().split(',')]
+
+    needed_cols = [c for c in TARGET_COLS if c in csv_cols]
+    if not needed_cols:
+        raise ValueError("В CSV не найдено целевых колонок.")
+
+    try:
+        raw_conn = db.engine.raw_connection()
+        
+        with raw_conn.cursor() as cur:
+            # 🔧 1. Настройки сессии для максимальной скорости пакетной загрузки
+            cur.execute("SET statement_timeout = 0")
+            cur.execute("SET synchronous_commit = OFF")   # 🚀 Ускоряет запись в 5–10× (WAL пишется асинхронно)
+            cur.execute("SET work_mem = '256MB'")         # 🧠 Сортировки/hash-join в RAM, а не на диске
+            cur.execute("SET maintenance_work_mem = '512MB'")
+
+            cur.execute("DROP TABLE IF EXISTS temp_subs")
+            
+            # 2. Создаём temp-таблицу (TEXT для гибкости)
+            temp_defs = ", ".join(f"{col} TEXT" for col in csv_cols)
+            cur.execute(f"CREATE TEMP TABLE temp_subs ({temp_defs}) ON COMMIT PRESERVE ROWS")
+
+            # 3. Копируем CSV (самый быстрый этап)
+            with open(csv_filepath, 'r', encoding='utf-8') as f_data:
+                cur.copy_expert("COPY temp_subs FROM STDIN WITH CSV HEADER", f_data)
+            
+            print(f"   ✅ CSV загружен во временную таблицу")
+
+            # 4. Формируем SELECT с кастами
+            select_parts = []
+            for col in needed_cols:
+                if col in ('attempt_time', 'submission_time'):
+                    select_parts.append(f"CASE WHEN t.{col} != '' THEN to_timestamp(t.{col}::bigint) END AS {col}")
+                elif col in ('submission_id', 'step_id', 'user_id'):
+                    select_parts.append(f"NULLIF(t.{col}, '')::BIGINT AS {col}")
+                elif col == 'score':
+                    select_parts.append(f"NULLIF(t.{col}, '')::DOUBLE PRECISION AS {col}")
+                elif col == 'reply_clear':
+                    select_parts.append(f"(LOWER(NULLIF(t.{col}, '')) IN ('1','true','yes','t','y')) AS {col}")
+                else:
+                    select_parts.append(f"NULLIF(t.{col}, '') AS {col}")
+
+            select_clause = ", ".join(select_parts)
+            cols_str = ", ".join(needed_cols)
+
+            # ⚡ 5. Вставка с оптимизацией: DO NOTHING вместо DO UPDATE
+            # DO UPDATE обновляет индексы и WAL для КАЖДОЙ строки → 20+ минут.
+            # DO NOTHING пропускает существующие записи → 3–6 минут.
+            cur.execute(f"""
+                INSERT INTO submission ({cols_str})
+                SELECT {select_clause}
+                FROM temp_subs t
+                WHERE EXISTS (
+                    SELECT 1 FROM learner l WHERE l.user_id = NULLIF(t.user_id, '')::BIGINT
+                )
+                ON CONFLICT (submission_id) DO NOTHING
+            """)
+            added = cur.rowcount
+
+            cur.execute("SELECT COUNT(*) FROM temp_subs")
+            total = cur.fetchone()[0]
+            
+            # 🔙 6. Возвращаем безопасные настройки и фиксируем
+            cur.execute("SET synchronous_commit = ON")
+            raw_conn.commit()
+
+        skipped = total - added
+        print(f"✅ Готово. Загружено: {total}, Добавлено: {added}, Пропущено (нет user_id): {skipped}")
+        return {"submissions_added": added, "skipped": skipped}
+
+    except Exception as e:
+        raw_conn.rollback()
+        print(f"❌ Ошибка импорта: {e}")
+        raise
+    finally:
+        raw_conn.close()
+'''
+
+
+#old
 def import_submissions(csv_filepath):
     if not os.path.exists(csv_filepath):
         print(f"❌ Файл не найден: {csv_filepath}")

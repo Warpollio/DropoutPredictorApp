@@ -1,4 +1,3 @@
-// src/hooks/useFeatureComputation.jsx
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
@@ -6,80 +5,114 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 export default function useFeatureComputation() {
   const [taskId, setTaskId] = useState(null);
-  const [status, setStatus] = useState('idle'); // idle | pending | running | completed | failed
+  const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState('');
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   
   const pollRef = useRef(null);
+  const statusRef = useRef('idle');
 
-  // Запуск вычисления
+  // 🚀 Запуск вычисления
   const start = async (params) => {
     setStatus('pending');
+    statusRef.current = 'pending'; 
     setProgress(0);
     setMessage('Запуск задачи...');
     setError(null);
     setResult(null);
     
     try {
-      const res = await axios.post(`${API_URL}/api/features/compute`, params);
-      setTaskId(res.data.task_id);
-      // Поллинг начнётся автоматически через useEffect
+      const res = await axios.post(`${API_URL}/api/features/compute-v2`, params);
+      const returnedTaskId = res.data.task_id;
+      if (!returnedTaskId) throw new Error('Нет task_id в ответе');
+      setTaskId(returnedTaskId);
     } catch (err) {
       setStatus('failed');
-      setError(err.response?.data?.error || err.message || 'Не удалось запустить вычисление');
+      statusRef.current = 'failed';
+      setError(err.response?.data?.error || err.message || 'Ошибка запуска');
     }
   };
 
-  // Поллинг статуса задачи
-  useEffect(() => {
-    if (!taskId || !['pending', 'running'].includes(status)) return;
 
-    pollRef.current = setInterval(async () => {
+  useEffect(() => {
+    if (!taskId) return;
+    
+    const poll = async () => {
+
+      if (!['pending', 'running'].includes(statusRef.current)) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        return;
+      }
+      
       try {
         const res = await axios.get(`${API_URL}/api/features/compute/${taskId}/status`);
         const { status: s, progress: p, message: m, result: r, error: e } = res.data;
         
+
         setStatus(s);
+        statusRef.current = s;
         setProgress(p || 0);
         setMessage(m || '');
         
         if (s === 'completed') {
           setResult(r);
-          clearInterval(pollRef.current);
+          if (pollRef.current) clearInterval(pollRef.current);
         } else if (s === 'failed') {
           setError(e || 'Ошибка вычисления');
-          clearInterval(pollRef.current);
+          if (pollRef.current) clearInterval(pollRef.current);
         }
+
       } catch (err) {
-        clearInterval(pollRef.current);
-        setStatus('failed');
-        setError('Не удалось получить статус задачи');
+        if (err.response?.status === 404) {
+          setStatus('failed');
+          statusRef.current = 'failed';
+          setError(`Задача #${taskId} не найдена`);
+          if (pollRef.current) clearInterval(pollRef.current);
+        } else {
+          console.warn('⚠️ Ошибка опроса:', err.message);
+
+        }
       }
-    }, 1000); // опрос каждую секунду
+    };
 
-    // Очистка при размонтировании или смене taskId
-    return () => clearInterval(pollRef.current);
-  }, [taskId, status]);
 
-  // Сброс состояния
+    poll();
+    
+
+    pollRef.current = setInterval(poll, 1000);
+
+
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [taskId]); 
+
+  // 🔄 Сброс
   const reset = () => {
     setStatus('idle');
+    statusRef.current = 'idle';
     setProgress(0);
     setMessage('');
     setResult(null);
     setError(null);
     setTaskId(null);
-    if (pollRef.current) clearInterval(pollRef.current);
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
   };
 
   return {
     start,
     reset,
     status,
-    progress,      // 0.0 → 1.0
-    message,       // "Обработано 1500/4500..."
+    progress,
+    message,
     result,
     error,
     isComputing: ['pending', 'running'].includes(status)
