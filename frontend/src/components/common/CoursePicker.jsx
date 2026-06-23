@@ -6,17 +6,6 @@ import {
 } from '@mui/material';
 import { School } from '@mui/icons-material';
 
-/**
- * Универсальный пикер курсов
- * @param {Object} props
- * @param {Array} props.courses - Список курсов [{ id, name, modules, steps, ... }]
- * @param {boolean} props.loading - Состояние загрузки
- * @param {string|null} props.error - Текст ошибки
- * @param {Function} props.onSelect - Callback при выборе курса: (courseId) => void
- * @param {boolean} props.useNavigation - Если true, использует navigate вместо onSelect
- * @param {string} props.placeholder - Текст заглушки в селекте
- * @param {string} props.title - Заголовок компонента
- */
 export default function CoursePicker({
   courses = [],
   loading = false,

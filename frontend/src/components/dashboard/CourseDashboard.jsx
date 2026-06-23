@@ -100,7 +100,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
     return () => { requestRef.current = null; };
   }, [courseId, selectedMetrics.join(','), activeFilters.module_id, activeFilters.lesson_id]);
 
-  // 🔹 Загружаем статистику регистрации
+
   useEffect(() => {
     if (!courseId) return;
     
@@ -108,7 +108,6 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
       try {
         setEnrollmentLoading(true);
         
-        // Формируем параметры запроса
         const params = { interval: enrollmentPeriod };
         if (enrollmentDates.start) params.start_date = enrollmentDates.start;
         if (enrollmentDates.end) params.end_date = enrollmentDates.end;
@@ -129,7 +128,6 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
     fetchEnrollment();
   }, [courseId, enrollmentPeriod, enrollmentDates.start, enrollmentDates.end]);
 
-  // При выборе курса — меняем URL
   const handleCourseChange = (event) => {
     const newId = event.target.value;
     navigate(`/dashboard/${newId}`); // /dashboard/123
@@ -187,7 +185,6 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
         <StepChart data={data} metrics={selectedMetrics} sx={{ mb: 4 }} />
       )}
       
-      {/* Сводка */}
       <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap', mt: 3 }}>
         <Box>
           <Typography variant="caption" color="text.secondary">Шагов</Typography>
@@ -201,12 +198,10 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
         )}
       </Box>
       
-      {/* Фильтры для графика регистрации */}
       <Paper elevation={1} sx={{ p: 2, mb: 3, bgcolor: 'background.paper' }}>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
           <Typography variant="subtitle2" fontWeight={600}>📅 Период:</Typography>
           
-          {/* Дата начала */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <Typography variant="caption" color="text.secondary">С:</Typography>
             <input
@@ -220,7 +215,6 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
             />
           </Box>
           
-          {/* Дата конца */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <Typography variant="caption" color="text.secondary">По:</Typography>
             <input
@@ -235,8 +229,7 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
           </Box>
           
           <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
-          
-          {/* Период группировки */}
+
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5,}}>
             <Typography variant="caption" color="text.secondary">Группировка:</Typography>
             <Select
@@ -269,7 +262,6 @@ const [enrollmentLoading, setEnrollmentLoading] = useState(false);
         </Box>
       </Paper>
 
-      {/* График регистрации студентов */}
       <EnrollmentChart 
         data={enrollmentData} 
         period={enrollmentPeriod}
