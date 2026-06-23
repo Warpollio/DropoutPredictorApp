@@ -22,16 +22,13 @@ from flask import send_from_directory, request
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_react(path):
-    # Если запрашивается файл из API — пропускаем (обрабатывается блюпринтами)
     if path.startswith('api/'):
-        return None  # Flask продолжит поиск по зарегистрированным blueprint'ам
+        return None 
     
-    # Если файл существует в static/ — отдаём его (JS, CSS, картинки)
     static_folder = app.static_folder
     if static_folder and path != "" and os.path.exists(os.path.join(static_folder, path)):
         return send_from_directory(static_folder, path)
     
-    # Иначе отдаём index.html (React Router сам разберётся с маршрутом на клиенте)
     return send_from_directory(static_folder, 'index.html')
 
 

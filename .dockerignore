@@ -1,16 +1,13 @@
-# 🔹 Frontend (самое важное!)
 frontend/node_modules
 frontend/dist
 frontend/.vite
 
-# 🔹 Python
 backend/__pycache__
 backend/*.pyc
 backend/venv
 backend/.venv
 backend/instance
 
-# 🔹 Системные файлы
 .git
 .gitignore
 .dockerignore
