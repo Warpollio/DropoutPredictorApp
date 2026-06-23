@@ -387,7 +387,8 @@ class UserCourseProgress(db.Model):
         db.ForeignKey('course.course_id', ondelete='CASCADE'), primary_key=True
     )
     
-    is_completed: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
+    #is_completed: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True), nullable=True)
     progress_percent: Mapped[float] = mapped_column(db.Float, default=0.0, nullable=False)
     last_activity_utc: Mapped[datetime | None] = mapped_column(db.DateTime(timezone=True), nullable=True)

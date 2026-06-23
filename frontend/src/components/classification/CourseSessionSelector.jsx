@@ -7,7 +7,8 @@ export default function CourseSessionSelector({
   selectedCourse, 
   selectedSession, 
   onCourseChange, 
-  onSessionChange 
+  onSessionChange,
+  loading = { courses: false, sessions: false }
 }) {
   return (
     <Box sx={{ 
@@ -26,8 +27,7 @@ export default function CourseSessionSelector({
       </Box>
       
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, alignItems: 'flex-end' }}>
-        {/* Выбор курса */}
-        <FormControl sx={{ minWidth: 280 }} size="small">
+        <FormControl sx={{ minWidth: 280 }} size="small" disabled={loading.courses || !courses.length}>
           <InputLabel id="course-select-label">Курс</InputLabel>
           <Select
             labelId="course-select-label"
@@ -49,8 +49,11 @@ export default function CourseSessionSelector({
           </Select>
         </FormControl>
 
-        {/* Выбор сессии */}
-        <FormControl sx={{ minWidth: 280 }} size="small" disabled={!selectedCourse}>
+        <FormControl 
+          sx={{ minWidth: 280 }} 
+          size="small" 
+          disabled={loading.sessions || !sessions.length || !selectedCourse}
+        >
           <InputLabel id="session-select-label">Сессия вычисления</InputLabel>
           <Select
             labelId="session-select-label"
@@ -58,23 +61,42 @@ export default function CourseSessionSelector({
             label="Сессия вычисления"
             onChange={(e) => onSessionChange(e.target.value)}
             sx={{
-              '& .MuiSelect-select': { color: 'text.primary' },
+              '& .MuiSelect-select': { color: 'text.primary', py: 0.5 },
               '& .MuiInputLabel-root': { color: 'text.secondary' },
               '& .MuiOutlinedInput-notchedOutline': { borderColor: 'divider' },
               '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'text.secondary' }
             }}
           >
-            {sessions.map(session => (
-              <MenuItem key={session.id} value={session.id}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <CalendarToday fontSize="small" sx={{ color: 'text.secondary' }} />
-                  {new Date(session.cutoff_date).toLocaleDateString('ru-RU')}
-                  <Chip 
-                    label={`v${session.algorithm_version}`} 
-                    size="small" 
-                    variant="outlined" 
-                    sx={{ ml: 1, color: 'text.secondary', borderColor: 'divider', height: 20 }} 
-                  />
+            {sessions.map((session, index) => (
+              <MenuItem 
+                key={`${session.course_id}-${session.id}-${index}`} 
+                value={session.id}
+                sx={{ py: 1 }}
+              >
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, width: '100%' }}>
+
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CalendarToday fontSize="small" sx={{ color: 'text.secondary' }} />
+                    <Typography variant="body2" color="text.primary">
+                      {session.cutoff_date ? new Date(session.cutoff_date).toLocaleDateString('ru-RU') : '—'}
+                    </Typography>
+                    <Chip 
+                      label={`v${session.algorithm_version}`} 
+                      size="small" 
+                      variant="outlined" 
+                      sx={{ color: 'text.secondary', borderColor: 'divider', height: 20, fontSize: '0.7rem' }} 
+                    />
+                  </Box>
+                  
+                  {session.description && (
+                    <Typography 
+                      variant="caption" 
+                      color="text.secondary" 
+                      sx={{ pl: 3, lineHeight: 1.2, maxWidth: 350 }}
+                    >
+                      {session.description.length > 50 ? `${session.description.slice(0, 50)}…` : session.description}
+                    </Typography>
+                  )}
                 </Box>
               </MenuItem>
             ))}

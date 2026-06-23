@@ -9,7 +9,8 @@ export default function ModelTrainingPanel({
   message, 
   onStartTraining, 
   onStopTraining,
-  selectedMetricsCount 
+  selectedMetricsCount,
+  canStop = true
 }) {
   const [confirmStop, setConfirmStop] = useState(false);
 

@@ -13,6 +13,9 @@ from models import Course, Module, Step, Learner, Submission, Lesson, Comment
 # Features_api
 from features_api import features_bp
 app.register_blueprint(features_bp)
+# Classification api
+from classification_api import classification_bp
+app.register_blueprint(classification_bp)
 
 @app.route("/hello", methods=["GET"])
 def hello_world():
@@ -37,12 +40,12 @@ def api_import():
         with app.app_context():
             if import_type == 'structure':
                 result = import_structure(temp_path)
-                #sync_step_stats()
-                calculate_course_progress()
             elif import_type == 'learners':
                 result = import_learners(temp_path)
             elif import_type == 'submissions':
                 result = import_submissions(temp_path)
+                sync_step_stats()
+                calculate_course_progress()
             elif import_type == 'comments':
                 result = import_comments(temp_path)
             elif import_type == 'step_metrics':
@@ -55,7 +58,7 @@ def api_import():
     except Exception as e:
 
         app.logger.error(f"Ошибка импорта: {e}")
-        return jsonify({"error": "Ошибка обработки файла. Проверьте логи сервера."}), 500
+        return jsonify({"error": "Ошибка обработки файла."}), 500
 
     finally:
         if os.path.exists(temp_path):
@@ -67,7 +70,7 @@ def api_import():
 
 @app.route('/api/courses/stats', methods=['GET'])
 def get_courses_stats():
-    """Возвращает список курсов с базовой статистикой"""
+    """список курсов с базовой статистикой"""
     print("stats start")
     try:
 
@@ -134,7 +137,7 @@ def get_courses_stats():
     
 @app.route('/api/courses/list', methods=['GET']) 
 def get_courses_for_picker():
-    """Возвращает плоский список курсов для селектора/пикера"""
+    """плоский список курсов"""
     try:
         rows = db.session.execute(
             select(Course.course_id, Course.name).order_by(Course.name)
@@ -154,7 +157,6 @@ def get_courses_for_picker():
 
 @app.route('/api/courses/<int:course_id>/details', methods=['GET'])
 def get_course_details(course_id):
-    """Детальная статистика по конкретному курсу"""
     try:
         course = db.session.get(Course, course_id)
         if not course:
@@ -318,21 +320,19 @@ def sync_step_stats():
     db.session.commit()
 
 def calculate_course_progress():
-    """Вычисляет прогресс и статус завершения курсов для всех пользователей после импорта."""
-    print("📊 Расчёт прогресса курсов...")
+    print("Расчёт прогресса и активности курсов...")
     
     sql = text("""
         INSERT INTO user_course_progress (
-            user_id, course_id, progress_percent, is_completed, completed_at, last_activity_utc
+            user_id, course_id, progress_percent, is_active, last_activity_utc
         )
         WITH UserCourseStats AS (
-            -- Статистика по каждому пользователю в каждом курсе
             SELECT 
                 sub.user_id,
                 m.course_id,
                 COUNT(DISTINCT sub.step_id) FILTER (WHERE sub.status = 'correct') AS passed_steps,
                 MAX(sub.submission_time) AS last_activity_utc,
-                MAX(sub.submission_time) FILTER (WHERE sub.status = 'correct') AS last_success_time
+                MAX(MAX(sub.submission_time)) OVER (PARTITION BY m.course_id) AS course_max_time
             FROM submission sub
             JOIN step s ON sub.step_id = s.step_id
             JOIN lesson l ON s.lesson_id = l.lesson_id
@@ -340,7 +340,6 @@ def calculate_course_progress():
             GROUP BY sub.user_id, m.course_id
         ),
         CourseTotals AS (
-            -- Общее количество шагов в каждом курсе
             SELECT m.course_id, COUNT(s.step_id) AS total_steps
             FROM step s
             JOIN lesson l ON s.lesson_id = l.lesson_id
@@ -351,22 +350,19 @@ def calculate_course_progress():
             ucs.user_id,
             ucs.course_id,
             LEAST(100.0, (ucs.passed_steps::FLOAT / NULLIF(ct.total_steps, 0)) * 100) AS progress_percent,
-            (ucs.passed_steps::FLOAT / NULLIF(ct.total_steps, 0)) >= 1.0 AS is_completed,
-            CASE WHEN (ucs.passed_steps::FLOAT / NULLIF(ct.total_steps, 0)) >= 1.0 
-                 THEN ucs.last_success_time ELSE NULL END AS completed_at,
+            (ucs.last_activity_utc >= (ucs.course_max_time - INTERVAL '30 days'))::boolean AS is_active,
             ucs.last_activity_utc
         FROM UserCourseStats ucs
         JOIN CourseTotals ct ON ucs.course_id = ct.course_id
         ON CONFLICT (user_id, course_id) DO UPDATE SET
             progress_percent = EXCLUDED.progress_percent,
-            is_completed = EXCLUDED.is_completed,
-            completed_at = EXCLUDED.completed_at,
+            is_active = EXCLUDED.is_active,
             last_activity_utc = EXCLUDED.last_activity_utc
     """)
     
     result = db.session.execute(sql)
     db.session.commit()
-    print(f"✅ Прогресс рассчитан для {result.rowcount} записей")
+    print(f"Прогресс и активность рассчитаны для {result.rowcount} записей")
 
 #params: start_date, end_date interval('day' | 'week' | 'month')
 @app.route('/api/courses/<int:course_id>/enrollment', methods=['GET'])
@@ -599,7 +595,7 @@ import click
 @app.cli.command("sync-stats")
 @with_appcontext
 def sync_stats_command():
-    click.echo("🔄 Запуск синхронизации статистики...")
+    click.echo("Запуск синхронизации статистики...")
     sync_step_stats()
 
 if __name__ == "__main__":

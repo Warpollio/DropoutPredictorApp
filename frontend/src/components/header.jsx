@@ -1,6 +1,6 @@
 import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material'
 import { Link, useLocation } from 'react-router-dom'
-import { School, Upload, FilterList, Dashboard } from '@mui/icons-material'
+import { School, Upload, FilterList, Dashboard, TableChart} from '@mui/icons-material'
 
 function Header() {
   const location = useLocation()
@@ -9,6 +9,7 @@ function Header() {
     { path: '/', label: 'Загрузка', icon: <Upload /> },
     { path: '/features', label: 'Критерии', icon: <FilterList /> },
     { path: '/dashboard', label: 'Дашборд', icon: <Dashboard /> },
+    { path: '/classification', label: 'Классификация', icon: <TableChart /> },
   ]
 
   return (

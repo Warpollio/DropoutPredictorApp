@@ -16,7 +16,7 @@ def _run_compute_v2(cf_id, course_id, task_id, obs_days=30):
 
         try:
             task.status = 'running'
-            task.message = f'🔍 Расчёт окон наблюдаций ({obs_days} дн.)...'
+            task.message = f'🔍 Расчёт окон наблюдений ({obs_days} дн.)...'
             task.progress = 0.1
             db.session.commit()
 
@@ -81,6 +81,7 @@ def _run_compute_v2(cf_id, course_id, task_id, obs_days=30):
                  pct_steps_with_post_success, avg_errors_before_success, steps_completed, max_step_reached,
                  last_activity_utc, attempts_trend_slope, is_sequence_escalating, global_attempt_pattern)
                 WITH UserWindows AS (
+                    -- Окно наблюдения строго для выбранного курса
                     SELECT s.user_id, MIN(s.submission_time) AS first_sub, 
                            MIN(s.submission_time) + (:obs_days * INTERVAL '1 day') AS obs_end
                     FROM submission s
@@ -91,10 +92,19 @@ def _run_compute_v2(cf_id, course_id, task_id, obs_days=30):
                     GROUP BY s.user_id
                 ),
                 StepAgg AS (
+                    -- Берём уже посчитанные метрики по шагам
                     SELECT usf.user_id, usf.step_id, usf.total_attempts, usf.first_try_correct,
                            usf.errors_before_success, usf.has_post_success_attempts
                     FROM user_step_feature usf
                     WHERE usf.cf_id = :cf_id
+                ),
+                UserLastActivity AS (
+                    -- Чистый расчёт последней активности без дублирования
+                    SELECT s.user_id, MAX(s.submission_time) AS last_activity_utc
+                    FROM submission s
+                    JOIN UserWindows uw ON s.user_id = uw.user_id
+                    WHERE s.submission_time <= uw.obs_end
+                    GROUP BY s.user_id
                 ),
                 UserAgg AS (
                     SELECT sa.user_id,
@@ -103,24 +113,22 @@ def _run_compute_v2(cf_id, course_id, task_id, obs_days=30):
                            COALESCE(STDDEV(sa.total_attempts), 0.0) AS std_attempts_per_step,
                            AVG(sa.has_post_success_attempts::int) AS pct_steps_with_post_success,
                            AVG(sa.errors_before_success) AS avg_errors_before_success,
-                           COUNT(*) AS steps_completed,
-                           MAX(st.position) AS max_step_reached,
-                           MAX(s.submission_time) AS last_activity_utc,
-                           (SUM(sa.total_attempts) - COUNT(*))::float / NULLIF(COUNT(*), 0) AS attempts_trend_slope,
+                           SUM(sa.total_attempts) AS steps_completed,
+                           COUNT(sa.step_id) AS max_step_reached,
+                           ula.last_activity_utc,
+                           (SUM(sa.total_attempts) - COUNT(sa.step_id))::float / NULLIF(COUNT(sa.step_id), 0) AS attempts_trend_slope,
                            (AVG(sa.total_attempts) > 1.5)::boolean AS is_sequence_escalating,
                            jsonb_build_object(
                                'obs_window_days', :obs_days,
                                'total_attempts', SUM(sa.total_attempts),
-                               'unique_steps', COUNT(*),
+                               'unique_steps', COUNT(sa.step_id),
                                'first_submission', MAX(uw.first_sub),
-                               'retry_intensity', (SUM(sa.total_attempts) - COUNT(*))::float / NULLIF(COUNT(*), 0)
+                               'retry_intensity', (SUM(sa.total_attempts) - COUNT(sa.step_id))::float / NULLIF(COUNT(sa.step_id), 0)
                            ) AS global_attempt_pattern
                     FROM StepAgg sa
-                    JOIN user_step_feature usf ON sa.user_id = usf.user_id AND sa.step_id = usf.step_id AND usf.cf_id = :cf_id
-                    JOIN step st ON sa.step_id = st.step_id
-                    JOIN submission s ON sa.user_id = s.user_id AND sa.step_id = s.step_id
                     JOIN UserWindows uw ON sa.user_id = uw.user_id
-                    GROUP BY sa.user_id
+                    LEFT JOIN UserLastActivity ula ON sa.user_id = ula.user_id
+                    GROUP BY sa.user_id, ula.last_activity_utc
                 ),
                 Comments AS (
                     SELECT c.user_id, COUNT(*) AS comments_count
@@ -229,7 +237,7 @@ def get_user_features(user_id):
     ).scalar_one_or_none()
 
     if not feat:
-        return jsonify({'error': 'Фичи не найдены. Сначала вызовите POST /compute.'}), 404
+        return jsonify({'error': 'Сначало выполните вычисление'}), 404
 
     return jsonify({
         'user_id': feat.user_id, 'cf_id': feat.cf_id,
@@ -270,7 +278,7 @@ def list_user_features():
             'steps_completed': UserDropoutFeature.steps_completed,
             'cutoff_date': CourseFeature.prediction_cutoff_utc,
             'calculated_at': CourseFeature.prediction_cutoff_utc,
-            'prediction_cutoff_utc': CourseFeature.prediction_cutoff_utc  # ← Дефолт теперь работает
+            'prediction_cutoff_utc': CourseFeature.prediction_cutoff_utc
         }
         
         sort_col = sort_map.get(sort_by, CourseFeature.prediction_cutoff_utc)
@@ -287,7 +295,7 @@ def list_user_features():
                 UserDropoutFeature.avg_errors_before_success, UserDropoutFeature.steps_completed,
                 CourseFeature.prediction_cutoff_utc.label('calculated_at')
             )
-            .join(Learner, UserDropoutFeature.user_id == Learner.user_id, isouter=True) # ← LEFT JOIN на случай битых FK
+            .join(Learner, UserDropoutFeature.user_id == Learner.user_id, isouter=True)
             .join(CourseFeature, UserDropoutFeature.cf_id == CourseFeature.cf_id)
             .where(UserDropoutFeature.cf_id == target_cf_id)
             .order_by(sort_col)
@@ -297,7 +305,6 @@ def list_user_features():
 
         results = db.session.execute(query).all()
         
-        # 🔹 Быстрый подсчёт общего количества
         total = db.session.execute(
             select(func.count()).where(UserDropoutFeature.cf_id == target_cf_id)
         ).scalar() or 0
@@ -326,4 +333,4 @@ def list_user_features():
 
     except Exception as e:
         app.logger.error(f"Ошибка /list: {e}")
-        return jsonify({'error': 'Не удалось загрузить список фич', 'details': str(e)}), 500
+        return jsonify({'error': 'Не удалось загрузить список ', 'details': str(e)}), 500
