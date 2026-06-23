@@ -1,25 +1,27 @@
+import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from sqlalchemy import event, Engine
+from flask_migrate import Migrate
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 CORS(app)
 
+DB_HOST = os.environ.get('DB_HOST', '127.0.0.1')
+DB_PORT = os.environ.get('DB_PORT', '5433')
 
-
-# PostgreSQL
-app.config["SQLALCHEMY_DATABASE_URI"] = "postgresql://app_user:password@127.0.0.1:5433/dropout_predictor?sslmode=disable"
+app.config["SQLALCHEMY_DATABASE_URI"] = f"postgresql://app_user:password@{DB_HOST}:{DB_PORT}/dropout_predictor?sslmode=disable"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# Оптимизации 
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-    "pool_size": 10,           # Кол-во соединений в пуле
-    "pool_recycle": 3600,      # Пересоздавать соединения каждые 1 час
-    "pool_pre_ping": True,     # Проверять соединение перед использованием
+    "pool_size": 10,
+    "pool_recycle": 3600,
+    "pool_pre_ping": True,
     "connect_args": {
-        "options": "-c statement_timeout=30000"  # Таймаут запросов: 30 сек
+        "options": "-c statement_timeout=30000"
     }
 }
 
 db = SQLAlchemy(app)
+
+migrate = Migrate(app, db)
