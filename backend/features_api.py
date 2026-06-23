@@ -81,7 +81,6 @@ def _run_compute_v2(cf_id, course_id, task_id, obs_days=30):
                  pct_steps_with_post_success, avg_errors_before_success, steps_completed, max_step_reached,
                  last_activity_utc, attempts_trend_slope, is_sequence_escalating, global_attempt_pattern)
                 WITH UserWindows AS (
-                    -- Окно наблюдения строго для выбранного курса
                     SELECT s.user_id, MIN(s.submission_time) AS first_sub, 
                            MIN(s.submission_time) + (:obs_days * INTERVAL '1 day') AS obs_end
                     FROM submission s
@@ -92,14 +91,12 @@ def _run_compute_v2(cf_id, course_id, task_id, obs_days=30):
                     GROUP BY s.user_id
                 ),
                 StepAgg AS (
-                    -- Берём уже посчитанные метрики по шагам
                     SELECT usf.user_id, usf.step_id, usf.total_attempts, usf.first_try_correct,
                            usf.errors_before_success, usf.has_post_success_attempts
                     FROM user_step_feature usf
                     WHERE usf.cf_id = :cf_id
                 ),
                 UserLastActivity AS (
-                    -- Чистый расчёт последней активности без дублирования
                     SELECT s.user_id, MAX(s.submission_time) AS last_activity_utc
                     FROM submission s
                     JOIN UserWindows uw ON s.user_id = uw.user_id
